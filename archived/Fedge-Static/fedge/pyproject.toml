@@ -1,0 +1,106 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "fedge"
+version = "1.0.0"
+description = "Hierarchical Federated Learning with SCAFFOLD and FedProx for CIFAR-10"
+license = "Apache-2.0"
+dependencies = [
+    "flwr[simulation]>=1.18.0",
+    "flwr-datasets[vision]>=0.5.0",
+    "torch==2.5.1",
+    "torchvision==0.20.1",
+    "scikit-learn>=1.4.2",
+    "pandas>=2.2.0",
+    "filelock>=3.13.0",
+    "psutil>=5.9.0",
+    "matplotlib>=3.7.0",
+    "seaborn>=0.12.0",
+    "numpy>=1.24.0",
+    "scipy>=1.10.0",
+    "toml>=0.10.2",
+    "datasets>=2.14.0"
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["."]
+
+# Core Hierarchical FL Configuration
+[tool.flwr.hierarchy]
+# Architecture
+num_servers              = 3
+clients_per_server       = [5, 5, 5]
+global_rounds            = 2
+server_rounds_per_global = 1
+cloud_port               = 6000
+server_base_port         = 5000
+
+# Dataset
+dataset_flag = "cifar10"
+
+# SCAFFOLD + FedProx
+scaffold_enabled = true
+prox_mu          = 0.005
+
+# Dynamic Clustering
+dynamic_clustering   = true
+clustering_frequency = 3
+
+# Learning parameters
+lr_init   = 0.01
+lr_decay  = 0.998
+lr_gamma  = 0.95
+local_steps = 5
+
+# Early stopping
+es_patience = 10
+es_delta = 0.001
+
+# Client training parameters
+weight_decay = 0.0001
+clip_norm = 1.0
+momentum = 0.9
+
+# FedProx adaptive parameters
+prox_mu_min = 0.001
+acc_stable_threshold = 0.02
+loss_delta = 0.01
+
+# Clustering parameters
+cluster_better_delta = 0.05
+
+# Evaluation
+eval_batch_size = 20
+estimation_batch_size = 32
+
+# Dirichlet Partitioning
+[tool.flwr.hierarchy.dirichlet]
+alpha_server = 0.7  # Server-level heterogeneity
+alpha_client = 1.0  # Client-level heterogeneity  
+seed         = 42
+
+# Dynamic Clustering Parameters
+[tool.flwr.cluster]
+distance_metric = "cosine"
+linkage         = "ward"
+max_clusters    = 3
+min_cluster_size = 2
+
+# Multi-level clustering parameters
+[tool.flwr.cluster.multi_level]
+similarity_threshold = 0.8
+min_cluster_size = 2
+max_clusters = 3
+
+# Batch sizes for clustering
+[tool.flwr.cluster.batch_sizes]
+feature_batch = 32
+
+# System Configuration
+[tool.flwr.system]
+communication_timeout = 300
+max_retries          = 3
+gc_frequency         = 10
+verbose_logging      = true

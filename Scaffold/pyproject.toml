@@ -1,0 +1,45 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "fedge"
+version = "1.0.0"
+description = ""
+license = "Apache-2.0"
+dependencies = [
+    "flwr[simulation]>=1.18.0",
+    "flwr-datasets[vision]>=0.5.0",
+    "torch==2.5.1",
+    "torchvision==0.20.1",
+    "datasets>=2.19.0",      
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["."]
+
+[tool.flwr.app]
+publisher = "satwat"
+
+[tool.flwr.app.components]
+serverapp = "fedge.server_app:app"
+clientapp = "fedge.client_app:app"
+
+[tool.flwr.app.config]
+num-server-rounds   = 150  
+fraction-fit        = 1
+local-epochs        = 1
+batch_size          = 32          
+min_available_clients = 10
+# Data heterogeneity and reproducibility (mirror FedProx)
+dirichlet_alpha     = 0.5
+seed                = 0
+dataset_flag        = "cifar10"
+
+[tool.flwr.federations]
+default = "local-simulation"
+
+[tool.flwr.federations.local-simulation]
+options.num-supernodes = 10
+options.ray_init_args.local_mode = true
+options.ray_init_args.ignore_reinit_error = true

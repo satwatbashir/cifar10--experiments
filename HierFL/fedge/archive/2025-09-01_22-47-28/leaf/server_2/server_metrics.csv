@@ -1,0 +1,3 @@
+global_round,local_round,avg_test_loss_participating_clients,avg_test_accuracy_participating_clients,server_test_loss_on_server_partitions,server_test_accuracy_on_server_partitions,server_test_loss_on_full_dataset,server_test_accuracy_on_full_dataset,bytes_down,bytes_up,comp_time,round_time
+0,0,2.6644142775297164,0.1,2.663815028370379,0.1,2.663815028370379,0.1,496048,496048,0.0027769000735133886,0.0027769000735133886
+1,0,2.3074299375295637,0.1,2.3072686012560566,0.1,2.3072686012560566,0.1,496048,496048,0.001506300177425146,0.001506300177425146

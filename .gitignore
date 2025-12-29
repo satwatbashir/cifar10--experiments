@@ -1,0 +1,55 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Virtualenvs
+.venv/
+venv/
+env/
+
+# Data/artifacts/logs (root and all subfolders)
+data/
+**/data/
+metrics/
+**/metrics/
+
+# Global experiment outputs
+cifar10-metrics/
+cifar10-seed/*.csv
+cifar10-seed/metrics/
+cifar10-seed/personalization_analysis/*.csv
+
+# Training run artefacts
+runs/
+**/runs/
+rounds/
+**/rounds/
+models/
+**/models/
+signals/
+**/signals/
+save/
+**/save/
+
+# Large binary artefacts
+*.tar
+*.tar.gz
+*.zip
+*.pt
+*.pth
+*.onnx
+
+# Logs
+*.log
+server.log
+client*.log
+
+# IDE/OS junk
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Windows special file accidentally created in this folder
+NUL

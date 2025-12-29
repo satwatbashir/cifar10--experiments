@@ -1,0 +1,46 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "fedge"
+version = "1.0.0"
+description = ""
+license = "Apache-2.0"
+dependencies = [
+    "flwr[simulation]>=1.18.0",
+    "flwr-datasets[vision]>=0.5.0",
+    "torch==2.5.1",
+    "torchvision==0.20.1",
+    "scikit-learn>=1.2.0",
+    "pandas>=1.2.0",
+    "matplotlib>=3.5.0",
+    "medmnist>=2.2.2",
+    "datasets>=2.18.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["."]
+
+[tool.flwr.app]
+publisher = "satwat"
+
+[tool.flwr.app.components]
+serverapp = "fedge.server_app:app"
+clientapp = "fedge.client_app:app"
+
+[tool.flwr.app.config]
+num-server-rounds = 150
+fraction-fit = 1.0
+local-epochs = 1
+batch_size = 32
+dirichlet_alpha = 0.5
+min_available_clients = 10
+seed = 1
+fraction_evaluate = 1.0
+
+[tool.flwr.federations]
+default = "local-simulation"
+
+[tool.flwr.federations.local-simulation]
+options.num-supernodes = 10
