@@ -4,6 +4,8 @@ from collections import OrderedDict
 import random
 import os
 import json
+import fcntl
+import time
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -137,78 +139,108 @@ def _get_partition_cache_path(num_partitions: int, alpha: float, seed: int) -> s
     return os.path.join(_PARTITION_CACHE_DIR, f"partitions_n{num_partitions}_a{alpha}_s{seed}.json")
 
 def _get_cached_partitions(num_partitions: int, alpha: float, seed: int, train_labels, test_labels):
-    """Return cached partition indices from disk or compute once and save."""
+    """Return cached partition indices from disk or compute once and save.
+
+    Uses file locking to prevent race conditions when multiple Ray actors
+    try to compute partitions simultaneously.
+    """
     cache_key = (num_partitions, alpha, seed)
 
-    # 1) Check memory cache first
+    # 1) Check memory cache first (fast path)
     if cache_key in _PARTITION_CACHE:
         return _PARTITION_CACHE[cache_key]
 
-    # 2) Check disk cache
+    # 2) Check disk cache (without lock first for speed)
     cache_path = _get_partition_cache_path(num_partitions, alpha, seed)
     if os.path.exists(cache_path):
-        with open(cache_path, "r") as f:
-            cached = json.load(f)
-        # Convert string keys back to int and lists to the right format
-        result = {
-            "train": {int(k): v for k, v in cached["train"].items()},
-            "test": {int(k): v for k, v in cached["test"].items()},
-        }
-        _PARTITION_CACHE[cache_key] = result
-        return result
+        try:
+            with open(cache_path, "r") as f:
+                cached = json.load(f)
+            result = {
+                "train": {int(k): v for k, v in cached["train"].items()},
+                "test": {int(k): v for k, v in cached["test"].items()},
+            }
+            _PARTITION_CACHE[cache_key] = result
+            return result
+        except (json.JSONDecodeError, KeyError):
+            pass  # File exists but is incomplete/corrupt, will recompute with lock
 
-    # 3) Compute partitions (only happens once, first process)
-    print(f"[task.py] Computing Dirichlet partitions (n={num_partitions}, alpha={alpha}, seed={seed})...")
+    # 3) Use file lock to ensure only one process computes partitions
+    lock_path = cache_path + ".lock"
+    os.makedirs(_PARTITION_CACHE_DIR, exist_ok=True)
 
-    # Build HF labels datasets for partitioner (labels only)
-    hf_train = hfds.Dataset.from_dict({"label": train_labels}).cast_column("label", hfds.Value("int64"))
-    hf_test  = hfds.Dataset.from_dict({"label": test_labels}).cast_column("label", hfds.Value("int64"))
+    with open(lock_path, "w") as lock_file:
+        # Acquire exclusive lock (blocks until available)
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        try:
+            # Re-check disk cache after acquiring lock (another process may have created it)
+            if os.path.exists(cache_path):
+                try:
+                    with open(cache_path, "r") as f:
+                        cached = json.load(f)
+                    result = {
+                        "train": {int(k): v for k, v in cached["train"].items()},
+                        "test": {int(k): v for k, v in cached["test"].items()},
+                    }
+                    _PARTITION_CACHE[cache_key] = result
+                    return result
+                except (json.JSONDecodeError, KeyError):
+                    pass  # Will recompute
 
-    # Create and run partitioners
-    set_global_seed(seed)
-    train_partitioner = DirichletPartitioner(
-        num_partitions=num_partitions,
-        partition_by="label",
-        alpha=alpha,
-        min_partition_size=100,
-        self_balancing=False,
-        shuffle=True,
-        seed=seed,
-    )
-    train_partitioner.dataset = hf_train
-    train_partitioner._determine_partition_id_to_indices_if_needed()
+            # 4) Compute partitions (only one process reaches here)
+            print(f"[task.py] Computing Dirichlet partitions (n={num_partitions}, alpha={alpha}, seed={seed})...")
 
-    test_partitioner = DirichletPartitioner(
-        num_partitions=num_partitions,
-        partition_by="label",
-        alpha=alpha,
-        min_partition_size=20,
-        self_balancing=False,
-        shuffle=True,
-        seed=seed,
-    )
-    test_partitioner.dataset = hf_test
-    test_partitioner._determine_partition_id_to_indices_if_needed()
+            # Build HF labels datasets for partitioner (labels only)
+            hf_train = hfds.Dataset.from_dict({"label": train_labels}).cast_column("label", hfds.Value("int64"))
+            hf_test  = hfds.Dataset.from_dict({"label": test_labels}).cast_column("label", hfds.Value("int64"))
 
-    # Get partition indices
-    result = {
-        "train": dict(train_partitioner._partition_id_to_indices),
-        "test": dict(test_partitioner._partition_id_to_indices),
-    }
+            # Create and run partitioners
+            set_global_seed(seed)
+            train_partitioner = DirichletPartitioner(
+                num_partitions=num_partitions,
+                partition_by="label",
+                alpha=alpha,
+                min_partition_size=100,
+                self_balancing=False,
+                shuffle=True,
+                seed=seed,
+            )
+            train_partitioner.dataset = hf_train
+            train_partitioner._determine_partition_id_to_indices_if_needed()
 
-    # 4) Save to disk for other Ray actors to use
-    # Convert numpy arrays to lists for JSON serialization
-    serializable = {
-        "train": {str(k): [int(i) for i in v] for k, v in result["train"].items()},
-        "test": {str(k): [int(i) for i in v] for k, v in result["test"].items()},
-    }
-    with open(cache_path, "w") as f:
-        json.dump(serializable, f)
-    print(f"[task.py] Partitions saved to {cache_path}")
+            test_partitioner = DirichletPartitioner(
+                num_partitions=num_partitions,
+                partition_by="label",
+                alpha=alpha,
+                min_partition_size=20,
+                self_balancing=False,
+                shuffle=True,
+                seed=seed,
+            )
+            test_partitioner.dataset = hf_test
+            test_partitioner._determine_partition_id_to_indices_if_needed()
 
-    # 5) Cache in memory too
-    _PARTITION_CACHE[cache_key] = result
-    return result
+            # Get partition indices
+            result = {
+                "train": dict(train_partitioner._partition_id_to_indices),
+                "test": dict(test_partitioner._partition_id_to_indices),
+            }
+
+            # 5) Save to disk for other Ray actors to use
+            serializable = {
+                "train": {str(k): [int(i) for i in v] for k, v in result["train"].items()},
+                "test": {str(k): [int(i) for i in v] for k, v in result["test"].items()},
+            }
+            with open(cache_path, "w") as f:
+                json.dump(serializable, f)
+            print(f"[task.py] Partitions saved to {cache_path}")
+
+            # 6) Cache in memory too
+            _PARTITION_CACHE[cache_key] = result
+            return result
+        finally:
+            # Release lock
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
 # ─────────────────────── load_data ───────────────────────
 def load_data(dataset_flag: str,
