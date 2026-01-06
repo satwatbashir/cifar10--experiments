@@ -29,7 +29,7 @@ clientapp = "fedge.client_app:app"
 # Reference: Li et al. (2022) ICDE - NIID-Bench benchmark
 num-server-rounds = 200   # NIID-Bench: 200 rounds for reported accuracy
 fraction-fit = 1.0        # 100% client participation
-min_available_clients = 10  # NIID-Bench: 10 clients
+min_available_clients = 4   # Match num-supernodes (4 clients share GPU)
 # FedProx hyperparameters
 proximal_mu = 0.01        # Standard FedProx mu
 local-epochs = 1          # Quick test (change to 5 for NIID-Bench)
@@ -44,7 +44,6 @@ default = "local-simulation"
 
 [tool.flwr.federations.local-simulation]
 # VM: n1-standard-8 (8 vCPUs, 30GB RAM) + 1x T4 (16GB VRAM)
-# Use local_mode=true like HHAR - simpler Ray setup, GPU works naturally
-options.num-supernodes = 10
-options.ray_init_args.local_mode = true
-options.ray_init_args.ignore_reinit_error = true
+options.num-supernodes = 4
+options.client-resources.num-cpus = 1
+options.client-resources.num-gpus = 0.25
