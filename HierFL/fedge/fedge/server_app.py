@@ -4,7 +4,7 @@ from typing import List, Tuple
 from flwr.common import Context, ndarrays_to_parameters, parameters_to_ndarrays, Metrics
 from flwr.server import ServerApp, ServerAppComponents, ServerConfig
 from flwr.server.strategy import FedAvg
-from fedge.task import Net, get_weights
+from fedge.task import ResNet18, get_weights
 import pickle
 
 class LeafFedAvg(FedAvg):
@@ -34,7 +34,7 @@ def server_fn(context: Context):
     clients_per_server = context.node_config["clients_per_server"]
 
     # Initialize model parameters
-    ndarrays = get_weights(Net())
+    ndarrays = get_weights(ResNet18())
     parameters = ndarrays_to_parameters(ndarrays)
 
     # Define strategy

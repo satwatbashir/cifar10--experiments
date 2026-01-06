@@ -27,7 +27,7 @@ clientapp = "fedge.client_app:app"
 [tool.flwr.app.config]
 num-server-rounds = 1
 fraction-fit = 1.0
-local-epochs = 5          # Literature: 5-20 (NIID-Bench uses 5)
+local-steps = 5           # Training batches per client per round (NIID-Bench: 5 epochs equivalent)
 # Baseline run configuration
 seed = 2
 batch_size = 64           # Literature: NIID-Bench, MOON use 64
@@ -43,8 +43,8 @@ client-resources.num_cpus = 1
 [tool.flwr.hierarchy]
 num_servers = 3
 clients_per_server = [5,5,5]
-global_rounds = 150
+global_rounds = 200
 server_rounds_per_global = 1
 cloud_port = 6000
-alpha_server = 0.5
-alpha_client = 0.3
+alpha_server = 0.5        # Non-IID across servers (heterogeneous edge regions)
+alpha_client = 1000.0     # IID within each server (high alpha ≈ uniform split)

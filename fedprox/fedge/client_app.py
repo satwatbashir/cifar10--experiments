@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Union
 from flwr.client import ClientApp, NumPyClient
 from flwr.common import parameters_to_ndarrays, Parameters, NDArrays
 
-from fedge.task import Net, load_data, set_weights, test, get_weights, DATA_FLAGS, set_global_seed
+from fedge.task import ResNet18, load_data, set_weights, test, get_weights, DATA_FLAGS, set_global_seed
 import time  # For computation and comms cost tracking
 
 
@@ -162,23 +162,24 @@ class FlowerClient(NumPyClient):
     
         
 def client_fn(context):
-    # 1) Data + model
-    dataset_flag = context.node_config.get("dataset_flag", "cifar10")
-    base_seed = int(context.run_config.get("seed", 0))
+    # 1) Data + model - NO FALLBACKS (all values must come from pyproject.toml)
+    base_seed = int(context.run_config["seed"])
 
     pid, num_parts = (
         context.node_config["partition-id"],
         context.node_config["num-partitions"],
     )
     trainloader, valloader, n_classes = load_data(
-        dataset_flag, pid, num_parts, 
-        batch_size=context.run_config.get("batch_size", 32),
-        alpha=context.run_config.get("dirichlet_alpha", 0.5),
+        "cifar10",  # Fixed dataset
+        pid,
+        num_parts,
+        batch_size=context.run_config["batch_size"],
+        alpha=context.run_config["dirichlet_alpha"],
         seed=base_seed,
     )
-    sample, _ = next(iter(trainloader))
-    _, c, h, w = sample.shape
-    net = Net(in_ch=c, img_h=h, img_w=w, n_class=n_classes)
+
+    # ResNet-18 for CIFAR-10 (~11.2M params)
+    net = ResNet18(num_classes=n_classes)
 
     # 2) Return NumPyClient
     return FlowerClient(
@@ -186,7 +187,8 @@ def client_fn(context):
         trainloader,
         valloader,
         local_epochs=context.run_config["local-epochs"],
-        client_id=pid,  # For reproducibility
+        local_lr=context.run_config["learning_rate"],
+        client_id=pid,
         base_seed=base_seed,
     ).to_client()
 

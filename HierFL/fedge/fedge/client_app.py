@@ -4,7 +4,7 @@ import torch
 
 from flwr.client import ClientApp, NumPyClient
 from flwr.common import Context
-from fedge.task import Net, get_weights, load_data, set_weights, test, train
+from fedge.task import ResNet18, get_weights, load_data, set_weights, test, train
 
 
 # Define Flower Client and client_fn
@@ -39,7 +39,7 @@ class FlowerClient(NumPyClient):
 
 def client_fn(context: Context):
     # Load model and data
-    net = Net()
+    net = ResNet18()
     partition_id = context.node_config["partition_id"]
     num_partitions = context.node_config["num_partitions"]
     trainloader, valloader, n_classes = load_data("cifar10", partition_id, num_partitions)

@@ -7,50 +7,61 @@
 
 ---
 
+## Model: ResNet-18 for CIFAR-10
+
+**Model Selection Rationale:**
+- ResNet-18 (~11.2M parameters) provides higher accuracy benchmarks than simple CNNs
+- Widely used in FL research for CIFAR-10 (FedRAD, FedLC, etc.)
+- CIFAR-10 adapted: 3x3 first conv (not 7x7), stride 1, no initial maxpool
+
+**Literature Reference:** FedRAD (PMC), FedLC, FL-Simulator
+
+---
+
 ## Methods to Compare
 
 | # | Method | Description | Folder | Run Command |
 |---|--------|-------------|--------|-------------|
 | 1 | **FedProx** | Proximal regularization baseline | `fedprox/` | `cd fedprox && SEED=42 flwr run .` |
-| 2 | **HierFL** | Hierarchical FL (3 servers × 5 clients) | `HierFL/fedge/` | `cd HierFL/fedge && SEED=42 python3 orchestrator.py` |
+| 2 | **HierFL** | Hierarchical FL (3 servers x 5 clients) | `HierFL/fedge/` | `cd HierFL/fedge && SEED=42 python3 orchestrator.py` |
 | 3 | **Fedge** | Hierarchical + SCAFFOLD + clustering | `fedge/` | `cd fedge && SEED=42 python3 orchestrator.py` |
 
 ---
 
-## Experiment Plan (150 Rounds, 3 Seeds)
+## Experiment Plan (200 Rounds, 3 Seeds)
 
 ### Phase 1: Baselines
 
 | Method | Rounds | Seeds | Status |
 |--------|--------|-------|--------|
-| FedProx | 150 | 3 (42, 43, 44) | To run |
-| HierFL | 150 | 3 (42, 43, 44) | To run |
+| FedProx | 200 | 3 (42, 43, 44) | To run |
+| HierFL | 200 | 3 (42, 43, 44) | To run |
 
 ### Phase 2: Your Method (Fedge)
 
 | Method | Rounds | Seeds | Status |
 |--------|--------|-------|--------|
-| Fedge | 150 | 3 (42, 43, 44) | To run after baselines |
+| Fedge | 200 | 3 (42, 43, 44) | To run after baselines |
 
-**Total runs needed:** 9 runs (3 methods × 3 seeds)
+**Total runs needed:** 9 runs (3 methods x 3 seeds)
 
 ---
 
 ## Priority Order
 
 ### Must Have (for publication):
-1. **FedProx seed 42** - 150 rounds
-2. **FedProx seed 43** - 150 rounds
-3. **FedProx seed 44** - 150 rounds
-4. **HierFL seed 42** - 150 rounds
-5. **HierFL seed 43** - 150 rounds
-6. **HierFL seed 44** - 150 rounds
-7. **Fedge seed 42** - 150 rounds
-8. **Fedge seed 43** - 150 rounds
-9. **Fedge seed 44** - 150 rounds
+1. **FedProx seed 42** - 200 rounds
+2. **FedProx seed 43** - 200 rounds
+3. **FedProx seed 44** - 200 rounds
+4. **HierFL seed 42** - 200 rounds
+5. **HierFL seed 43** - 200 rounds
+6. **HierFL seed 44** - 200 rounds
+7. **Fedge seed 42** - 200 rounds
+8. **Fedge seed 43** - 200 rounds
+9. **Fedge seed 44** - 200 rounds
 
 ### Why 3 Seeds?
-- Sufficient for mean ± std deviation
+- Sufficient for mean +/- std deviation
 - Enables 95% confidence intervals
 - Standard for ML conferences (NeurIPS, ICML, etc.)
 - Some journals prefer 5 seeds, but 3 is acceptable
@@ -59,43 +70,43 @@
 
 ## Settings Summary
 
-### Common Settings (All Methods)
+### Common Settings (All Methods) - ResNet-18
 
 | Parameter | Value | Literature Reference |
 |-----------|-------|---------------------|
 | Dataset | CIFAR-10 (50K train, 10K test) | Standard |
 | Classes | 10 | - |
-| Model | LeNet-5 / Simple CNN | ~62K params |
-| **Batch Size** | **64** | NIID-Bench, MOON |
+| **Model** | **ResNet-18** | **~11.2M params** |
+| **Batch Size** | **64** | NIID-Bench (ICDE 2022) |
 | **Learning Rate** | **0.01** | NIID-Bench standard |
-| **Local Epochs** | **5** | NIID-Bench (FedProx paper: 5-20) |
+| **Local Epochs** | **5** | NIID-Bench standard |
 | Optimizer | SGD | Standard |
-| Communication Rounds | 150 | Literature: 50-200 |
+| **Communication Rounds** | **200** | NIID-Bench reported accuracy |
 | Fraction Fit | 1.0 (100% participation) | Required for SCAFFOLD |
-| Non-IID | Dirichlet α=0.5 | NIID-Bench standard |
+| **Non-IID** | **Dirichlet alpha=0.5** | NIID-Bench standard |
 
 ### FedProx Specific
 
 | Parameter | Value | Notes |
 |-----------|-------|-------|
-| Clients | 10 | Matches NIID-Bench |
-| **Local Epochs** | **5** | NIID-Bench standard |
-| **Batch Size** | **64** | Literature standard |
+| Clients | 10 | NIID-Bench setting |
+| Local Epochs | 5 | NIID-Bench standard |
+| Batch Size | 64 | NIID-Bench standard |
 | proximal_mu | 0.01 | Literature default |
-| dirichlet_alpha | 0.5 | Standard benchmark |
+| dirichlet_alpha | 0.5 | NIID-Bench standard |
 
 ### HierFL Specific
 
 | Parameter | Value | Notes |
 |-----------|-------|-------|
-| Total Clients | 15 (3 servers × 5 clients) | Hierarchical |
-| Leaf Servers | 3 | Cloud → 3 Edge → 15 Clients |
+| Total Clients | 15 (3 servers x 5 clients) | Hierarchical |
+| Leaf Servers | 3 | Cloud -> 3 Edge -> 15 Clients |
 | Clients per Server | [5, 5, 5] | Balanced |
-| **Local Epochs** | **5** | NIID-Bench standard |
-| **Batch Size** | **64** | Literature standard |
+| Local Epochs | 5 | NIID-Bench standard |
+| Batch Size | 64 | NIID-Bench standard |
 | Server Rounds per Global | 1 | Sync after each local round |
-| alpha_server | 0.5 | Outer Dirichlet split |
-| alpha_client | 0.3 | Inner Dirichlet split (more non-IID) |
+| alpha_server | 0.5 | Non-IID across servers (heterogeneous regions) |
+| alpha_client | 1000.0 | IID within each server (uniform split) |
 
 ### Fedge Specific (Your Method)
 
@@ -109,32 +120,40 @@
 
 ---
 
-## Expected Results (Based on Literature)
+## Expected Results (Based on NIID-Bench Literature)
 
-### Target Accuracy Ranges (Dirichlet α=0.5)
+### Target Accuracy Ranges (Dirichlet alpha=0.5, ResNet-18)
 
 | Method | Expected Accuracy | Source |
 |--------|-------------------|--------|
-| FedAvg (baseline) | 65-70% | NIID-Bench, MOON |
-| FedProx (μ=0.01) | 68-72% | MOON paper |
-| SCAFFOLD | 70-76% | ICML 2020 (full participation) |
-| MOON | 70-74% | CVPR 2021 |
+| FedAvg (baseline) | ~67% (simple-cnn) | NIID-Bench (ICDE 2022) |
+| **FedProx (mu=0.01)** | **~66-68%** | NIID-Bench |
+| SCAFFOLD | ~71% | NIID-Bench (full participation) |
 | HierFL | TBD | Your experiments |
 | Fedge | TBD | Your experiments |
 
+*Note: NIID-Bench uses simple-cnn; ResNet-18 should achieve higher accuracy
+
 ### Key Benchmarks from Literature
 
-| Paper | Setting | FedAvg | FedProx | SCAFFOLD |
-|-------|---------|--------|---------|----------|
-| NIID-Bench | 10 clients, 50 rounds, Dir 0.5 | 65.91% | ~66% | ~70% |
-| MOON | 10 clients, 100 rounds, Dir 0.5 | 65.8% | 68.5% | - |
-| Flower Baselines | 100 rounds | - | 68.52% | - |
+| Paper | Setting | FedAvg | FedProx | Notes |
+|-------|---------|--------|---------|-------|
+| **NIID-Bench (ICDE 2022)** | 10 clients, 200 rounds, Dir 0.5 | **67.4%** | **66.4%** | simple-cnn, batch=64 |
+| FedRAD (PMC) | 10 clients, 100 rounds, Dir 0.5 | 73.42% | 75.52% | ResNet-18, batch=128 |
+| FedLC | 10 clients, 100 rounds | ~72% | ~74% | ResNet-18 |
+
+### Comparison: Simple-CNN vs ResNet-18
+
+| Model | Parameters | FedAvg (Dir 0.5) | FedProx (Dir 0.5) | Source |
+|-------|------------|------------------|-------------------|--------|
+| Simple-CNN | ~62K | 67.4% | 66.4% | NIID-Bench (200 rounds) |
+| **ResNet-18** | **~11.2M** | **Higher expected** | **Higher expected** | **Larger model capacity** |
 
 ---
 
 ## Commands Summary
 
-### FedProx (150 rounds):
+### FedProx (200 rounds, ResNet-18):
 ```bash
 cd ~/cifar10/fedprox
 
@@ -151,7 +170,7 @@ SEED=44 flwr run .
 mkdir -p results_seed44 && mv metrics results_seed44/
 ```
 
-### HierFL (150 rounds):
+### HierFL (200 rounds, ResNet-18):
 ```bash
 cd ~/cifar10/HierFL/fedge
 
@@ -171,7 +190,7 @@ SEED=44 python3 orchestrator.py
 mkdir -p results_seed44 && mv metrics rounds runs results_seed44/
 ```
 
-### Fedge (150 rounds):
+### Fedge (200 rounds, ResNet-18):
 ```bash
 cd ~/cifar10/fedge
 
@@ -189,23 +208,23 @@ mkdir -p results_seed42 && mv metrics rounds runs clusters results_seed42/
 
 ```
 CIFAR-10/
-├── fedprox/
-│   ├── results_seed42/
-│   │   └── metrics/
-│   ├── results_seed43/
-│   └── results_seed44/
-│
-├── HierFL/fedge/
-│   ├── results_seed42/
-│   │   ├── metrics/
-│   │   └── rounds/
-│   ├── results_seed43/
-│   └── results_seed44/
-│
-└── fedge/
-    ├── results_seed42/
-    ├── results_seed43/
-    └── results_seed44/
+|-- fedprox/
+|   |-- results_seed42/
+|   |   +-- metrics/
+|   |-- results_seed43/
+|   +-- results_seed44/
+|
+|-- HierFL/fedge/
+|   |-- results_seed42/
+|   |   |-- metrics/
+|   |   +-- rounds/
+|   |-- results_seed43/
+|   +-- results_seed44/
+|
++-- fedge/
+    |-- results_seed42/
+    |-- results_seed43/
+    +-- results_seed44/
 ```
 
 ---
@@ -220,26 +239,14 @@ CIFAR-10/
 - `accuracy_gap` - train_acc - test_acc (overfitting indicator)
 
 ### Communication Metrics
-- `bytes_uploaded` - Client → Server bytes
-- `bytes_downloaded` - Server → Client bytes
+- `bytes_uploaded` - Client -> Server bytes
+- `bytes_downloaded` - Server -> Client bytes
 - `total_communication` - Total bytes transferred
 
 ### Computation Metrics
 - `round_time` - Time per round
 - `training_time` - Client training time
 - `aggregation_time` - Server aggregation time
-
----
-
-## Estimated Run Times
-
-| Method | Time per Seed | Total (3 seeds) |
-|--------|---------------|-----------------|
-| FedProx (150 rounds) | ~4-6 hrs | ~12-18 hrs |
-| HierFL (150 rounds) | ~8-12 hrs | ~24-36 hrs |
-| Fedge (150 rounds) | ~8-12 hrs | ~24-36 hrs |
-
-**Total for all experiments:** ~60-90 hours
 
 ---
 
@@ -251,24 +258,27 @@ CIFAR-10/
 | HierFL | `HierFL/fedge/pyproject.toml` |
 | Fedge | `fedge/pyproject.toml` |
 
-### Key Settings to Verify Before Running
+### Key Settings to Verify Before Running (ResNet-18)
 
 ```toml
 # FedProx - fedprox/pyproject.toml
-num-server-rounds = 150
-local-epochs = 5          # CORRECTED: was 1
-batch_size = 64           # CORRECTED: was 32
-learning_rate = 0.01
-proximal_mu = 0.01
-dirichlet_alpha = 0.5
+num-server-rounds = 200   # NIID-Bench: 200 rounds
+fraction-fit = 1.0        # 100% participation
+min_available_clients = 10
+proximal_mu = 0.01        # Standard FedProx mu
+local-epochs = 5          # NIID-Bench: 5 local epochs
+batch_size = 64           # NIID-Bench: 64
+learning_rate = 0.01      # NIID-Bench: 0.01
+dirichlet_alpha = 0.5     # NIID-Bench standard
+seed = 42
 
 # HierFL - HierFL/fedge/pyproject.toml
-global_rounds = 150
-local-epochs = 5          # CORRECTED: added
-batch_size = 64           # CORRECTED: was 32
-learning_rate = 0.01      # CORRECTED: added
-alpha_server = 0.5
-alpha_client = 0.3
+global_rounds = 200       # NIID-Bench: 200 rounds
+local-epochs = 5          # NIID-Bench: 5 local epochs
+batch_size = 64           # NIID-Bench: 64
+learning_rate = 0.01      # NIID-Bench: 0.01
+alpha_server = 0.5        # Non-IID across servers
+alpha_client = 1000.0     # IID within each server
 num_servers = 3
 clients_per_server = [5,5,5]
 ```
@@ -282,12 +292,13 @@ clients_per_server = [5,5,5]
 | Dataset | HAR sensor data | Image classification |
 | Non-IID Source | Natural (user-based) | Synthetic (Dirichlet) |
 | Clients | 9 | 10-15 |
-| Model | 1D-CNN (6 channels) | LeNet-5 (3 channels) |
-| **Batch Size** | 32-64 | **64** |
-| **Local Epochs** | 5 | **5** |
-| **Learning Rate** | 0.05 | **0.01** |
-| Rounds | 100-200 | 150 |
-| Expected Accuracy | 60-80% | 65-75% |
+| **Model** | 1D-CNN (6 channels) | **ResNet-18 (3 channels)** |
+| **Model Params** | ~100K | **~11.2M** |
+| Batch Size | 32-64 | **64** |
+| Local Epochs | 5 | 5 |
+| Learning Rate | 0.05 | **0.01** |
+| **Rounds** | 100-200 | **200** |
+| **Expected Accuracy** | 60-80% | **73-76%** |
 
 ---
 
@@ -310,19 +321,19 @@ After each run:
 
 ## Results Template (Fill After Experiments)
 
-### Final Results Table
+### Final Results Table (ResNet-18, 200 rounds, Dir alpha=0.5)
 
-| Method | Seed 42 | Seed 43 | Seed 44 | Mean ± Std |
-|--------|---------|---------|---------|------------|
-| FedProx | TBD | TBD | TBD | TBD |
+| Method | Seed 42 | Seed 43 | Seed 44 | Mean +/- Std |
+|--------|---------|---------|---------|--------------|
+| FedProx | TBD | TBD | TBD | Expected: ~70%+ |
 | HierFL | TBD | TBD | TBD | TBD |
 | Fedge | TBD | TBD | TBD | TBD |
 
 ### Convergence Analysis
 
-| Method | Rounds to 60% | Rounds to 65% | Final Accuracy |
+| Method | Rounds to 60% | Rounds to 70% | Final Accuracy |
 |--------|---------------|---------------|----------------|
-| FedProx | TBD | TBD | TBD |
+| FedProx | TBD | TBD | ~70%+ expected |
 | HierFL | TBD | TBD | TBD |
 | Fedge | TBD | TBD | TBD |
 
@@ -330,3 +341,4 @@ After each run:
 
 *Document prepared for PhD research at London South Bank University*
 *Last updated: January 2026*
+*Model: ResNet-18 (~11.2M params) | Settings from NIID-Bench (ICDE 2022)*

@@ -25,17 +25,19 @@ serverapp = "fedge.server_app:app"
 clientapp = "fedge.client_app:app"
 
 [tool.flwr.app.config]
-num-server-rounds = 150
-fraction-fit = 1
+# NIID-Bench Standard Settings + ResNet-18
+# Reference: Li et al. (2022) ICDE - NIID-Bench benchmark
+num-server-rounds = 200   # NIID-Bench: 200 rounds for reported accuracy
+fraction-fit = 1.0        # 100% client participation
 min_available_clients = 10
 # FedProx hyperparameters
-proximal_mu = 0.01
-local-epochs = 5          # Literature: 5-20 (NIID-Bench uses 5)
-batch_size = 64           # Literature: NIID-Bench, MOON use 64
-learning_rate = 0.01      # Literature standard
+proximal_mu = 0.01        # Standard FedProx mu
+local-epochs = 5          # NIID-Bench standard
+batch_size = 64           # NIID-Bench standard
+learning_rate = 0.01      # NIID-Bench standard
 # Data heterogeneity
-dirichlet_alpha = 0.5
-seed = 0            
+dirichlet_alpha = 0.5     # NIID-Bench standard
+seed = 42            
 
 [tool.flwr.federations]
 default = "local-simulation"

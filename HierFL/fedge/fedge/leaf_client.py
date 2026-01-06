@@ -15,7 +15,7 @@ import grpc
 from flwr.client import NumPyClient, start_client
 
 # Import your task utilities:
-from fedge.task import Net, load_data, set_weights, train, test, get_weights, set_global_seed
+from fedge.task import ResNet18, load_data, set_weights, train, test, get_weights, set_global_seed
 
 # ─── Logging setup ───────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -201,7 +201,7 @@ def main():
     # 4) Instantiate your Net with appropriate channels & image size
     sample, _ = next(iter(trainloader))
     _, in_ch, H, W = sample.shape
-    net = Net(in_ch=in_ch, img_h=H, img_w=W, n_class=n_classes)
+    net = ResNet18(num_classes=n_classes)
 
     # 5) Wrap in the FlowerClient
     client = FlowerClient(net, trainloader, valloader, args.local_steps)

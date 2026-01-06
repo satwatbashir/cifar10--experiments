@@ -3,7 +3,7 @@
 from flwr.common import Context, ndarrays_to_parameters, Metrics, parameters_to_ndarrays
 from flwr.server import ServerApp, ServerAppComponents, ServerConfig
 from flwr.server.strategy import FedProx
-from fedge.task import Net, get_weights, load_data, set_weights, test, set_global_seed
+from fedge.task import ResNet18, get_weights, load_data, set_weights, test, set_global_seed
 from typing import List, Tuple
 import os
 import csv
@@ -83,12 +83,8 @@ def _evaluate_and_log_central_impl(dataset_flag: str, round_num: int, parameters
         seed=seed,
     )
 
-    # 2) Infer channels & dims
-    sample, _ = next(iter(trainloader))
-    _, in_ch, H, W = sample.shape
-
-    # 3) Build model & load global params
-    net = Net(in_ch=in_ch, img_h=H, img_w=W, n_class=num_classes)
+    # 2) Build ResNet-18 model & load global params
+    net = ResNet18(num_classes=num_classes)
 
     nds = parameters_to_ndarrays(parameters) if not isinstance(parameters, list) else parameters
     set_weights(net, nds)  # only this one
@@ -142,19 +138,18 @@ def _evaluate_and_log_central_impl(dataset_flag: str, round_num: int, parameters
 # Cluster metrics logger
 def server_fn(context: Context):
     global strategy
-    dataset_flag = context.node_config.get("dataset_flag", "cifar10")
 
-    # Read from config
+    # Read from config - NO FALLBACKS (all values must come from pyproject.toml)
     num_rounds = context.run_config["num-server-rounds"]
     fraction_fit = context.run_config["fraction-fit"]
-    min_available_clients = context.run_config.get("min_available_clients", 2)
-    
+    min_available_clients = context.run_config["min_available_clients"]
+
     # FedProx hyperparameters
-    proximal_mu = context.run_config.get("proximal_mu", 0.01)
-    dirichlet_alpha = context.run_config.get("dirichlet_alpha", 0.5)
+    proximal_mu = context.run_config["proximal_mu"]
+    dirichlet_alpha = context.run_config["dirichlet_alpha"]
 
     # Seed handling for this run
-    seed = int(context.run_config.get("seed", 0))
+    seed = int(context.run_config["seed"])
     set_global_seed(seed)
 
     # Per-seed metrics directory
@@ -165,22 +160,20 @@ def server_fn(context: Context):
     dist_round_counter = {"value": 1}
     fit_round_counter = {"value": 1}
 
-    trainloader, testloader, num_classes = load_data(dataset_flag, partition_id=0, num_partitions=1, batch_size=1, alpha=dirichlet_alpha, seed=seed)
+    # Load data for initial parameter sizing
+    trainloader, testloader, num_classes = load_data(
+        "cifar10", partition_id=0, num_partitions=1,
+        batch_size=context.run_config["batch_size"],
+        alpha=dirichlet_alpha, seed=seed
+    )
 
-    sample, _ = next(iter(trainloader))
-    if isinstance(sample, torch.Tensor):
-        _, in_ch, H, W = sample.shape
-    else:
-        print("Sample is NOT a tensor! Type:", type(sample))
-        print("Sample content:", sample)
-        raise ValueError("Sample is not a tensor. Did your transform apply?")
-
-    ndarrays   = get_weights(Net(in_ch=in_ch, img_h=H, img_w=W, n_class=num_classes))
+    # Initialize ResNet-18 model for initial parameters
+    ndarrays = get_weights(ResNet18(num_classes=num_classes))
     parameters = ndarrays_to_parameters(ndarrays)
 
     def eval_fn(round_num, parameters, config):
         # Centralized eval; write to per-seed directory and ensure seeded data
-        return _evaluate_and_log_central_impl(dataset_flag, round_num, parameters, config, metrics_dir=metrics_dir, seed=seed)
+        return _evaluate_and_log_central_impl("cifar10", round_num, parameters, config, metrics_dir=metrics_dir, seed=seed)
 
     # Aggregation callbacks with per-seed CSV routing
     def aggregate_and_log_seeded(metrics_list: List[Tuple[int, Metrics]]) -> Metrics:
