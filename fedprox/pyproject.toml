@@ -26,14 +26,15 @@ clientapp = "fedge.client_app:app"
 
 [tool.flwr.app.config]
 num-server-rounds = 150
-fraction-fit = 1        
-min_available_clients = 10  
+fraction-fit = 1
+min_available_clients = 10
 # FedProx hyperparameters
-proximal_mu = 0.01        
-local-epochs = 1         
-batch_size = 32           
+proximal_mu = 0.01
+local-epochs = 5          # Literature: 5-20 (NIID-Bench uses 5)
+batch_size = 64           # Literature: NIID-Bench, MOON use 64
+learning_rate = 0.01      # Literature standard
 # Data heterogeneity
-dirichlet_alpha = 0.5     
+dirichlet_alpha = 0.5
 seed = 0            
 
 [tool.flwr.federations]

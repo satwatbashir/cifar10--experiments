@@ -27,10 +27,11 @@ clientapp = "fedge.client_app:app"
 [tool.flwr.app.config]
 num-server-rounds = 1
 fraction-fit = 1.0
-local-steps = 60
+local-epochs = 5          # Literature: 5-20 (NIID-Bench uses 5)
 # Baseline run configuration
 seed = 2
-batch_size = 32
+batch_size = 64           # Literature: NIID-Bench, MOON use 64
+learning_rate = 0.01      # Literature standard
 
 [tool.flwr.federations]
 default = "local-simulation"
