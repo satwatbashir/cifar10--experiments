@@ -32,7 +32,7 @@ fraction-fit = 1.0        # 100% client participation
 min_available_clients = 10  # NIID-Bench: 10 clients
 # FedProx hyperparameters
 proximal_mu = 0.01        # Standard FedProx mu
-local-epochs = 5          # NIID-Bench standard
+local-epochs = 1          # Quick test (change to 5 for NIID-Bench)
 batch_size = 64           # NIID-Bench standard
 learning_rate = 0.01      # NIID-Bench standard
 # Data heterogeneity
