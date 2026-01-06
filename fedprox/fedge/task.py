@@ -273,27 +273,23 @@ def load_data(dataset_flag: str,
     train_indices = partitions["train"][partition_id]
     test_indices = partitions["test"][partition_id]
 
-    # 3) Wrap with Subset + DataLoader (optimized for GPU training)
-    # VM: n1-standard-8 with 8 vCPUs, 2 CPUs per client = 2 workers safe
+    # 3) Wrap with Subset + DataLoader
+    # NOTE: num_workers=0 required for Ray compatibility (multiprocessing conflicts)
+    # Ray actors + DataLoader workers = deadlock risk
     _use_cuda = torch.cuda.is_available()
-    _num_workers = 2  # Match num-cpus per client in pyproject.toml
     trainloader = DataLoader(
         Subset(train_full, train_indices),
         batch_size=batch_size,
         shuffle=True,
-        num_workers=_num_workers,         # Parallel data loading
-        pin_memory=_use_cuda,             # GPU memory pinning
-        persistent_workers=True,          # Keep workers alive between epochs
-        prefetch_factor=2,                # Prefetch 2 batches per worker
+        num_workers=0,                    # Must be 0 for Ray compatibility
+        pin_memory=_use_cuda,             # GPU memory pinning still helps
     )
     testloader = DataLoader(
         Subset(test_full, test_indices),
         batch_size=batch_size,
         shuffle=False,
-        num_workers=_num_workers,
+        num_workers=0,
         pin_memory=_use_cuda,
-        persistent_workers=True,
-        prefetch_factor=2,
     )
 
     # 4) CIFAR-10 classes
