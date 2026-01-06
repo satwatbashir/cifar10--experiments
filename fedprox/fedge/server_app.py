@@ -14,6 +14,14 @@ import torch
 # Ensure metrics directory exists
 os.makedirs("metrics", exist_ok=True)
 strategy: FedProx  # will be set in server_fn below
+
+# Cache for centralized evaluation to avoid recreating DataLoaders each round
+_CENTRAL_EVAL_CACHE: dict = {
+    "trainloader": None,
+    "testloader": None,
+    "num_classes": None,
+    "seed": None,  # Track seed to invalidate cache if seed changes
+}
  
 
 # Centralized convergence tracker
@@ -75,13 +83,24 @@ ctracker = ConvergenceTracker()
  
 
 def _evaluate_and_log_central_impl(dataset_flag: str, round_num: int, parameters, config, metrics_dir: str = "metrics", seed: int = 0):
-    # 1) Load full dataset for centralized eval
-    trainloader, testloader, num_classes = load_data(
-        dataset_flag,
-        partition_id=0,
-        num_partitions=1,
-        seed=seed,
-    )
+    global _CENTRAL_EVAL_CACHE
+
+    # 1) Load full dataset for centralized eval (cached to avoid recreation each round)
+    if _CENTRAL_EVAL_CACHE["seed"] != seed or _CENTRAL_EVAL_CACHE["trainloader"] is None:
+        trainloader, testloader, num_classes = load_data(
+            dataset_flag,
+            partition_id=0,
+            num_partitions=1,
+            seed=seed,
+        )
+        _CENTRAL_EVAL_CACHE["trainloader"] = trainloader
+        _CENTRAL_EVAL_CACHE["testloader"] = testloader
+        _CENTRAL_EVAL_CACHE["num_classes"] = num_classes
+        _CENTRAL_EVAL_CACHE["seed"] = seed
+    else:
+        trainloader = _CENTRAL_EVAL_CACHE["trainloader"]
+        testloader = _CENTRAL_EVAL_CACHE["testloader"]
+        num_classes = _CENTRAL_EVAL_CACHE["num_classes"]
 
     # 2) Build ResNet-18 model & load global params
     net = ResNet18(num_classes=num_classes)

@@ -79,7 +79,9 @@ class FlowerClient(NumPyClient):
         self.net.train()
         for epoch in range(local_epochs):
             for x, y in self.trainloader:
-                x, y = x.to(self.device), y.to(self.device)
+                # Non-blocking transfer (effective with pin_memory=True in DataLoader)
+                x = x.to(self.device, non_blocking=True)
+                y = y.to(self.device, non_blocking=True)
                 if y.ndim > 1:
                     y = y.squeeze()
                 y = y.long()

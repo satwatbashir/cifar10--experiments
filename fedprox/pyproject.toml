@@ -43,9 +43,12 @@ seed = 42
 default = "local-simulation"
 
 [tool.flwr.federations.local-simulation]
-options.num-supernodes = 10
+# VM: n1-standard-8 (8 vCPUs, 30GB RAM) + 1x T4 (16GB VRAM)
+# 4 supernodes use ~5.4GB VRAM (4 CUDA contexts + models + activations)
+# Clients run in 3 batches of 4,4,2 - good balance of parallelism vs memory
+options.num-supernodes = 4
 options.ray_init_args.ignore_reinit_error = true
 
 [tool.flwr.federations.local-simulation.client-resources]
-num-cpus = 1
-num-gpus = 0.1
+num-cpus = 2   # 8 vCPUs / 4 supernodes = 2 CPUs per client
+num-gpus = 0.25  # 4 clients share 1 GPU = 0.25 each
