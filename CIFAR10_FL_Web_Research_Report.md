@@ -10,16 +10,16 @@
 
 Based on web research of recent publications (2024-2025), this report summarizes which methods, settings, and configurations achieve the **highest accuracies** on CIFAR-10 in federated learning scenarios.
 
-### Key Findings
+### Key Findings (Verified from NIID-Bench)
 
-| Factor | Best Practice | Expected Accuracy |
-|--------|---------------|-------------------|
-| **Best Method (2024)** | FedFSE, FedAF | 95.50%, +25% over baselines |
-| **Reliable Baseline** | FedProx (μ=0.01) | 68-72% (Dir α=0.5) |
-| **Best for Full Participation** | SCAFFOLD | 70-76% |
-| **Best for Non-IID** | FedClust, MOON | +45% over FedAvg |
-| **Standard Dirichlet α** | 0.5 | Moderate non-IID |
-| **Extreme Non-IID α** | 0.1 or 0.03 | Severe heterogeneity |
+| Factor | Best Practice | Expected Accuracy | Source |
+|--------|---------------|-------------------|--------|
+| **Best Method (2024)** | FedFSE, FedAF | 95.50%, +25% over baselines | Wiley/CVPR 2024 |
+| **Best Classic (verified)** | SCAFFOLD | **71.5%** (Dir α=0.5, 200 rounds) | [NIID-Bench](https://niidbench.xtra.science/) |
+| **FedAvg Baseline** | simple-cnn, 200 rounds | 67.4% (Dir α=0.5) | [NIID-Bench](https://niidbench.xtra.science/) |
+| **FedProx** | μ=0.001 | 66.4% (Dir α=0.5) | [NIID-Bench](https://niidbench.xtra.science/) |
+| **Standard Dirichlet α** | 0.5 | Moderate non-IID | Standard benchmark |
+| **Severe Non-IID α** | 0.1 | 63-68% accuracy | [NIID-Bench](https://niidbench.xtra.science/) |
 
 ---
 
@@ -35,17 +35,28 @@ Based on web research of recent publications (2024-2025), this report summarizes
 | **MOON** | 70.7% (Dir 0.5) | +5% over FedProx | [Flower Baselines](https://flower.ai/docs/baselines/moon.html) |
 | **CCVR** | New SOTA | Classifier calibration | [NeurIPS 2021](https://proceedings.neurips.cc/paper/2021/file/2f2b265625d76a6704b08093c652fd79-Paper.pdf) |
 
-### 1.2 Classic Methods Comparison (Dir α=0.5, 100 rounds)
+### 1.2 Classic Methods Comparison (Dir α=0.5)
 
-| Method | Accuracy | Notes |
-|--------|----------|-------|
-| FedAvg | 65.8% | Baseline |
-| FedProx (μ=0.01) | 68.5% | +2.7% over FedAvg |
-| SCAFFOLD | 70% | **Requires full participation** |
-| MOON | 70.7% | Best classic method |
-| FedNova | ~66% | Similar to FedProx |
+#### NIID-Bench Official Results (200 rounds, 10 clients, simple-cnn)
 
-Source: [NIID-Bench](https://github.com/Xtra-Computing/NIID-Bench), [arXiv Performance Study](https://arxiv.org/html/2403.17287v1)
+| Method | Model | Rounds | Dir(0.5) | Dir(0.1) | IID |
+|--------|-------|--------|----------|----------|-----|
+| **SCAFFOLD** | simple-cnn | 200 | **71.5%** | 67.6% | 74.6% |
+| FedAvg | simple-cnn | 200 | 67.4% | 63.2% | 72.8% |
+| FedNova | simple-cnn | 200 | 67.3% | 65.4% | 74.1% |
+| MOON | simple-cnn | 200 | 66.8% | 63.7% | 73.2% |
+| FedProx (μ=0.001) | simple-cnn | 200 | 66.4% | 63.3% | 73.4% |
+
+Source: [NIID-Bench Official Website](https://niidbench.xtra.science/)
+
+#### MOON Paper Results (100 rounds, 10 clients, simple-cnn + projection head)
+
+| Method | Model | Rounds | Local Epochs | Accuracy |
+|--------|-------|--------|--------------|----------|
+| MOON | simple-cnn + head | 100 | 10 | **70.71%** |
+| FedProx | simple-cnn + head | 100 | 10 | 68.52% |
+
+Source: [Flower MOON Baselines](https://flower.ai/docs/baselines/moon.html), [MOON GitHub](https://github.com/QinbinLi/MOON)
 
 ---
 
@@ -53,16 +64,26 @@ Source: [NIID-Bench](https://github.com/Xtra-Computing/NIID-Bench), [arXiv Perfo
 
 ### 2.1 Dirichlet Alpha Effects
 
-| α Value | Description | FedAvg Acc | FedProx Acc | Best Method |
-|---------|-------------|------------|-------------|-------------|
-| **100** | IID (uniform) | 82-85% | 82-85% | Any |
-| **1.0** | Mild non-IID | 78-82% | 78-82% | FedAvg/FedProx |
-| **0.5** | **Standard benchmark** | 65-70% | 68-72% | MOON, SCAFFOLD |
-| **0.3** | High non-IID | 55-65% | 60-68% | FedClust, pFedMe |
-| **0.1** | Severe non-IID | 45-55% | 50-60% | CFL, FedClust |
-| **0.03** | Extreme (~2 classes/client) | 20-35% | 25-40% | Clustering methods |
+#### Verified from NIID-Bench (200 rounds, 10 clients, simple-cnn)
 
-Source: [PMC FedRAD Study](https://pmc.ncbi.nlm.nih.gov/articles/PMC10385861/), [arXiv Non-IID Study](https://arxiv.org/pdf/1806.00582)
+| α Value | Description | FedAvg | FedProx | SCAFFOLD | Best Method |
+|---------|-------------|--------|---------|----------|-------------|
+| **IID** | Uniform | 72.8% | 73.4% | 74.6% | SCAFFOLD |
+| **0.5** | **Standard benchmark** | 67.4% | 66.4% | **71.5%** | **SCAFFOLD** |
+| **0.1** | Severe non-IID | 63.2% | 63.3% | 67.6% | SCAFFOLD |
+
+Source: [NIID-Bench Official Website](https://niidbench.xtra.science/)
+
+#### General Guidelines (from literature synthesis)
+
+| α Value | Description | Expected Accuracy Range |
+|---------|-------------|------------------------|
+| **100** | IID (uniform) | 72-75% (simple-cnn) |
+| **1.0** | Mild non-IID | 70-73% |
+| **0.5** | **Standard benchmark** | 66-72% |
+| **0.3** | High non-IID | 60-68% |
+| **0.1** | Severe non-IID | 63-68% |
+| **0.03** | Extreme (~2 classes/client) | 45-55% |
 
 ### 2.2 Key Insight
 > "As the degree of data heterogeneity decreases (i.e., α increases), the accuracy of all methods tends to increase."
@@ -158,16 +179,18 @@ Source: [ResearchGate VGG/ResNet Study](https://www.researchgate.net/figure/CIFA
 | Dir 0.1, 10 clients | 200-500 | 200-400 | Unstable | 150-200 |
 | 100 clients, 10% part. | 500-1000 | 400-800 | N/A | 300-500 |
 
-### 6.2 Typical Experiment Settings
+### 6.2 Typical Experiment Settings (Verified)
 
-| Paper/Benchmark | Rounds | Clients | Participation |
-|-----------------|--------|---------|---------------|
-| NIID-Bench | 50 | 10 | 100% |
-| MOON | 100 | 10 | 100% |
-| FedProx | 200 | 10 | 100% |
-| SCAFFOLD | 800 | 10 | **100% required** |
-| pFedMe | 600-800 | 5-20 | 100% |
-| FedDyn | 5000 | 100 | 5% |
+| Paper/Benchmark | Model | Rounds | Clients | Participation | Source |
+|-----------------|-------|--------|---------|---------------|--------|
+| **NIID-Bench** | simple-cnn | **200** | 10 | 100% | [niidbench.xtra.science](https://niidbench.xtra.science/) |
+| **MOON** | simple-cnn + head | **100** | 10 | 100% | [Flower MOON](https://flower.ai/docs/baselines/moon.html) |
+| FedProx | varies | 200 | 10 | 100% | Original paper |
+| SCAFFOLD | varies | 800 | 10 | **100% required** | ICML 2020 |
+| pFedMe | varies | 600-800 | 5-20 | 100% | NeurIPS 2020 |
+| FedDyn | varies | 5000 | 100 | 5% | ICLR 2021 |
+
+**Note:** NIID-Bench code default is 50 rounds, but official benchmark results use **200 rounds**.
 
 ---
 
@@ -220,17 +243,20 @@ fraction_fit = 1.0
 
 ## 8. Summary Tables
 
-### 8.1 Methods Ranked by Accuracy (Dir α=0.5)
+### 8.1 Methods Ranked by Accuracy (Dir α=0.5, simple-cnn, 200 rounds)
 
-| Rank | Method | Accuracy | Computation | Communication |
-|------|--------|----------|-------------|---------------|
-| 1 | FedFSE (2024) | 95.5% | High | Medium |
-| 2 | FedAF (2024) | +25% SOTA | Medium | Low |
-| 3 | FedClust | +45% FedAvg | Medium | Medium |
-| 4 | MOON | 70.7% | Medium | Medium |
-| 5 | SCAFFOLD | 70% | Low | **High (2x)** |
-| 6 | FedProx | 68.5% | Low | Low |
-| 7 | FedAvg | 65.8% | **Lowest** | **Lowest** |
+| Rank | Method | Model | Rounds | Accuracy | Source |
+|------|--------|-------|--------|----------|--------|
+| 1 | FedFSE (2024) | varies | varies | 95.5% | [Wiley 2024](https://onlinelibrary.wiley.com/doi/full/10.1155/2024/8860376) |
+| 2 | FedAF (2024) | varies | varies | +25% SOTA | [CVPR 2024](https://openaccess.thecvf.com/content/CVPR2024/papers/Wang_An_Aggregation-Free_Federated_Learning_for_Tackling_Data_Heterogeneity_CVPR_2024_paper.pdf) |
+| 3 | **SCAFFOLD** | simple-cnn | 200 | **71.5%** | [NIID-Bench](https://niidbench.xtra.science/) |
+| 4 | MOON | simple-cnn + head | 100 | 70.71% | [Flower MOON](https://flower.ai/docs/baselines/moon.html) |
+| 5 | FedAvg | simple-cnn | 200 | 67.4% | [NIID-Bench](https://niidbench.xtra.science/) |
+| 6 | FedNova | simple-cnn | 200 | 67.3% | [NIID-Bench](https://niidbench.xtra.science/) |
+| 7 | MOON | simple-cnn | 200 | 66.8% | [NIID-Bench](https://niidbench.xtra.science/) |
+| 8 | FedProx (μ=0.001) | simple-cnn | 200 | 66.4% | [NIID-Bench](https://niidbench.xtra.science/) |
+
+**Note:** MOON accuracy varies by implementation (66.8% in NIID-Bench vs 70.71% in Flower with projection head).
 
 ### 8.2 Settings Impact on Accuracy
 
@@ -249,30 +275,39 @@ fraction_fit = 1.0
 
 1. **Your FedProx settings are now correct** - 5 local epochs, batch 64, matches NIID-Bench
 
-2. **Expected accuracy range**: 65-72% for FedProx with Dir α=0.5
+2. **Expected accuracy range**: 66-67% for FedProx with Dir α=0.5 (verified: 66.4% at 200 rounds)
 
-3. **HierFL advantage**: Your hierarchical structure with α_client=0.3 creates more non-IID scenario, which should show clearer benefits of your method
+3. **SCAFFOLD is the best classic method** - 71.5% accuracy (verified from NIID-Bench)
 
-4. **Keep 100% participation** (fraction_fit=1.0) - Required for SCAFFOLD comparisons
+4. **HierFL advantage**: Your hierarchical structure with α_client=0.3 creates more non-IID scenario, which should show clearer benefits of your method
 
-5. **150 rounds is sufficient** - Most papers use 100-200 rounds
+5. **Keep 100% participation** (fraction_fit=1.0) - Required for SCAFFOLD comparisons
 
-6. **No single best algorithm** - Performance varies by data heterogeneity level
+6. **150-200 rounds is standard** - NIID-Bench uses 200 rounds for reported results
+
+7. **Model matters**: simple-cnn (~62K params) is standard for benchmarking; larger models give higher accuracy
 
 ---
 
 ## Sources
 
-- [NIID-Bench GitHub](https://github.com/Xtra-Computing/NIID-Bench)
-- [Performance Evaluation Study (arXiv 2024)](https://arxiv.org/html/2403.17287v1)
-- [FedClust (ACM 2024)](https://dl.acm.org/doi/fullHtml/10.1145/3673038.3673151)
-- [FedAF CVPR 2024](https://openaccess.thecvf.com/content/CVPR2024/papers/Wang_An_Aggregation-Free_Federated_Learning_for_Tackling_Data_Heterogeneity_CVPR_2024_paper.pdf)
+### Primary Verified Sources
+- **[NIID-Bench Official Website](https://niidbench.xtra.science/)** - Official benchmark results (200 rounds, simple-cnn)
+- [NIID-Bench GitHub](https://github.com/Xtra-Computing/NIID-Bench) - Code and documentation
+- [NIID-Bench Paper (ICDE 2022)](https://arxiv.org/pdf/2102.02079) - Original paper
+- **[MOON Flower Baselines](https://flower.ai/docs/baselines/moon.html)** - Verified MOON implementation (100 rounds)
+- [MOON GitHub](https://github.com/QinbinLi/MOON) - Original MOON implementation
+
+### State-of-the-Art Methods (2024)
+- [FedClust (ACM ICPP 2024)](https://dl.acm.org/doi/fullHtml/10.1145/3673038.3673151)
+- [FedAF (CVPR 2024)](https://openaccess.thecvf.com/content/CVPR2024/papers/Wang_An_Aggregation-Free_Federated_Learning_for_Tackling_Data_Heterogeneity_CVPR_2024_paper.pdf)
 - [FedFSE (Wiley 2024)](https://onlinelibrary.wiley.com/doi/full/10.1155/2024/8860376)
-- [MOON Flower Baselines](https://flower.ai/docs/baselines/moon.html)
-- [FedRAD Study (PMC)](https://pmc.ncbi.nlm.nih.gov/articles/PMC10385861/)
+
+### Additional References
+- [FedRAD Study (PMC)](https://pmc.ncbi.nlm.nih.gov/articles/PMC10385861/) - ResNet-18 experiments
 - [Client Size Study (arXiv 2025)](https://arxiv.org/html/2504.08198v1)
-- [ProFed Benchmark (arXiv 2025)](https://arxiv.org/html/2503.20618v1)
 
 ---
 
 *Report generated from web research, January 2026*
+*Last updated with verified NIID-Bench values: January 2026*
