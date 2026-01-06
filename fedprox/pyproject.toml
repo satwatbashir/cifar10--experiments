@@ -45,12 +45,12 @@ default = "local-simulation"
 [tool.flwr.federations.local-simulation]
 # VM: n1-standard-8 (8 vCPUs, 30GB RAM) + 1x T4 (16GB VRAM)
 # NIID-Bench requires 10 clients for literature comparison
-# Ray runs clients in batches - only 2 concurrent to avoid GPU OOM
-# 10 clients / 2 concurrent = 5 sequential batches per round
+# Force 1 client at a time to ensure GPU is used (not CPU fallback)
 options.num-supernodes = 10
 options.ray_init_args.ignore_reinit_error = true
 options.ray_init_args.num_cpus = 8
+options.ray_init_args.num_gpus = 1
 
 [tool.flwr.federations.local-simulation.client-resources]
 num-cpus = 1   # Each client gets 1 CPU
-num-gpus = 0.5  # Only 2 clients run concurrently on GPU (0.5 × 2 = 1.0)
+num-gpus = 1.0  # 1 client at a time uses full GPU (sequential, but fast)
