@@ -29,7 +29,7 @@ clientapp = "fedge.client_app:app"
 # Reference: Li et al. (2022) ICDE - NIID-Bench benchmark
 num-server-rounds = 200   # NIID-Bench: 200 rounds for reported accuracy
 fraction-fit = 1.0        # 100% client participation
-min_available_clients = 10
+min_available_clients = 10  # NIID-Bench: 10 clients
 # FedProx hyperparameters
 proximal_mu = 0.01        # Standard FedProx mu
 local-epochs = 5          # NIID-Bench standard
@@ -37,18 +37,20 @@ batch_size = 64           # NIID-Bench standard
 learning_rate = 0.01      # NIID-Bench standard
 # Data heterogeneity
 dirichlet_alpha = 0.5     # NIID-Bench standard
-seed = 42            
+seed = 42
 
 [tool.flwr.federations]
 default = "local-simulation"
 
 [tool.flwr.federations.local-simulation]
 # VM: n1-standard-8 (8 vCPUs, 30GB RAM) + 1x T4 (16GB VRAM)
-# 4 supernodes use ~5.4GB VRAM (4 CUDA contexts + models + activations)
-# Clients run in 3 batches of 4,4,2 - good balance of parallelism vs memory
-options.num-supernodes = 4
+# NIID-Bench requires 10 clients for literature comparison
+# Ray runs clients in batches - only 2 concurrent to avoid GPU OOM
+# 10 clients / 2 concurrent = 5 sequential batches per round
+options.num-supernodes = 10
 options.ray_init_args.ignore_reinit_error = true
+options.ray_init_args.num_cpus = 8
 
 [tool.flwr.federations.local-simulation.client-resources]
-num-cpus = 2   # 8 vCPUs / 4 supernodes = 2 CPUs per client
-num-gpus = 0.25  # 4 clients share 1 GPU = 0.25 each
+num-cpus = 1   # Each client gets 1 CPU
+num-gpus = 0.5  # Only 2 clients run concurrently on GPU (0.5 × 2 = 1.0)
