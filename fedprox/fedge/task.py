@@ -113,6 +113,9 @@ TFM_TEST = transforms.Compose([
 # Cache full datasets to avoid reloading for each client (memory optimization)
 _CIFAR10_CACHE: dict = {"train": None, "test": None}
 
+# Cache for Dirichlet partition indices: key = (num_partitions, alpha, seed)
+_PARTITION_CACHE: dict = {}
+
 def _get_cached_cifar10(train: bool = True):
     """Return cached CIFAR-10 dataset, loading once on first call."""
     key = "train" if train else "test"
@@ -122,6 +125,47 @@ def _get_cached_cifar10(train: bool = True):
             root="./data", train=train, download=True, transform=transform
         )
     return _CIFAR10_CACHE[key]
+
+def _get_cached_partitions(num_partitions: int, alpha: float, seed: int, train_labels, test_labels):
+    """Return cached partition indices, computing once per (num_partitions, alpha, seed)."""
+    cache_key = (num_partitions, alpha, seed)
+    if cache_key not in _PARTITION_CACHE:
+        # Build HF labels datasets for partitioner (labels only)
+        hf_train = hfds.Dataset.from_dict({"label": train_labels}).cast_column("label", hfds.Value("int64"))
+        hf_test  = hfds.Dataset.from_dict({"label": test_labels}).cast_column("label", hfds.Value("int64"))
+
+        # Create and run partitioners
+        set_global_seed(seed)
+        train_partitioner = DirichletPartitioner(
+            num_partitions=num_partitions,
+            partition_by="label",
+            alpha=alpha,
+            min_partition_size=100,
+            self_balancing=False,
+            shuffle=True,
+            seed=seed,
+        )
+        train_partitioner.dataset = hf_train
+        train_partitioner._determine_partition_id_to_indices_if_needed()
+
+        test_partitioner = DirichletPartitioner(
+            num_partitions=num_partitions,
+            partition_by="label",
+            alpha=alpha,
+            min_partition_size=20,
+            self_balancing=False,
+            shuffle=True,
+            seed=seed,
+        )
+        test_partitioner.dataset = hf_test
+        test_partitioner._determine_partition_id_to_indices_if_needed()
+
+        # Cache the partition indices for all clients
+        _PARTITION_CACHE[cache_key] = {
+            "train": train_partitioner._partition_id_to_indices,
+            "test": test_partitioner._partition_id_to_indices,
+        }
+    return _PARTITION_CACHE[cache_key]
 
 # ─────────────────────── load_data ───────────────────────
 def load_data(dataset_flag: str,
@@ -148,46 +192,19 @@ def load_data(dataset_flag: str,
     train_full = _get_cached_cifar10(train=True)
     test_full  = _get_cached_cifar10(train=False)
 
-    # 2) Build HF labels datasets for partitioner (labels only)
+    # 2) Get cached partition indices (computed once, reused for all clients)
     train_labels = [int(y) for y in train_full.targets]  # 50k
     test_labels  = [int(y) for y in test_full.targets]   # 10k
-    hf_train = hfds.Dataset.from_dict({"label": train_labels}).cast_column("label", hfds.Value("int64"))
-    hf_test  = hfds.Dataset.from_dict({"label":  test_labels}).cast_column("label",  hfds.Value("int64"))
+    partitions = _get_cached_partitions(num_partitions, alpha, seed, train_labels, test_labels)
 
-    # 3) Partition train/test indices with DirichletPartitioner
-    # Ensure deterministic partitioning per run
-    set_global_seed(seed)
-    train_partitioner = DirichletPartitioner(
-        num_partitions=num_partitions,
-        partition_by="label",
-        alpha=alpha,
-        min_partition_size=100,
-        self_balancing=False,
-        shuffle=True,
-        seed=seed,
-    )
-    train_partitioner.dataset = hf_train
-    train_partitioner._determine_partition_id_to_indices_if_needed()
-    train_indices = train_partitioner._partition_id_to_indices[partition_id]
+    train_indices = partitions["train"][partition_id]
+    test_indices = partitions["test"][partition_id]
 
-    test_partitioner = DirichletPartitioner(
-        num_partitions=num_partitions,
-        partition_by="label",
-        alpha=alpha,
-        min_partition_size=20,
-        self_balancing=False,
-        shuffle=True,
-        seed=seed,
-    )
-    test_partitioner.dataset = hf_test
-    test_partitioner._determine_partition_id_to_indices_if_needed()
-    test_indices = test_partitioner._partition_id_to_indices[partition_id]
-
-    # 4) Wrap with Subset + DataLoader
+    # 3) Wrap with Subset + DataLoader
     trainloader = DataLoader(Subset(train_full, train_indices), batch_size=batch_size, shuffle=True,  num_workers=0)
     testloader  = DataLoader(Subset(test_full,  test_indices),  batch_size=batch_size, shuffle=False, num_workers=0)
 
-    # 5) CIFAR-10 classes
+    # 4) CIFAR-10 classes
     n_class = 10
     return trainloader, testloader, n_class
 

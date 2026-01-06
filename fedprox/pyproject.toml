@@ -44,7 +44,8 @@ default = "local-simulation"
 
 [tool.flwr.federations.local-simulation]
 options.num-supernodes = 10
-options.ray_init_args.local_mode = true
 options.ray_init_args.ignore_reinit_error = true
-client-resources.num_cpus = 1
-client-resources.num_gpus = 0
+
+[tool.flwr.federations.local-simulation.client-resources]
+num-cpus = 1
+num-gpus = 0.1
