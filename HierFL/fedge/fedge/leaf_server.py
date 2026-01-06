@@ -38,7 +38,6 @@ class _DropDeprecated:
     def write(self, txt):
         if "DEPRECATED FEATURE" not in txt: self._out.write(txt)
     def flush(self): self._out.flush()
-import sys
 sys.stdout = _DropDeprecated(sys.stdout)
 sys.stderr = _DropDeprecated(sys.stderr)
 
@@ -155,17 +154,9 @@ class LeafFedAvg(FedAvg):
         logger.info(f"[{self.server_str} | Round {local_rnd}] Appended client eval metrics → {clients_eval_csv}")
 
     def aggregate_fit(self, rnd, results, failures):
-        
-        # Print per-client train_loss and num_examples
-        for cid, fit_res in results:
-            friendly = fit_res.metrics.get("client_id", str(cid))
-            loss = fit_res.metrics.get("train_loss", None)
-            n = fit_res.num_examples
-            
         if failures:
-            for failure in failures:
-                pass
-                
+            logger.warning(f"[{self.server_str}] {len(failures)} client(s) failed during fit")
+
         # Dump current round client metrics
         self._write_fit_metrics_csv(rnd, results)
         start_time = time.perf_counter()

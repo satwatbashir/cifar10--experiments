@@ -14,7 +14,6 @@ from pathlib import Path
 import logging
 import datetime
 import numpy as np
-import datasets as hf_datasets
 import atexit
 import signal
 logging.basicConfig(level=logging.WARNING, format="[%(asctime)s] %(levelname)s - %(message)s")
@@ -118,17 +117,11 @@ if not parts_json.exists():
     from torchvision import datasets as torch_datasets
     train_full = torch_datasets.CIFAR10(root="./data", train=True, download=True, transform=None)
     test_full  = torch_datasets.CIFAR10(root="./data", train=False, download=True, transform=None)
-    train_labels = [int(y) for y in train_full.targets]  # 50k
-    test_labels  = [int(y) for y in test_full.targets]   # 10k
-    hf_train = hf_datasets.Dataset.from_dict({"label": train_labels}).cast_column(
-        "label", hf_datasets.Value("int64")
-    )
-    hf_test = hf_datasets.Dataset.from_dict({"label": test_labels}).cast_column(
-        "label", hf_datasets.Value("int64")
-    )
+    train_labels = np.array([int(y) for y in train_full.targets])  # 50k
+    test_labels  = np.array([int(y) for y in test_full.targets])   # 10k
 
     mapping_train = hier_dirichlet_indices(
-        hf_train,
+        train_labels,
         NUM_SERVERS,
         CLIENTS_PER_SERVER_LIST,
         alpha_server=ALPHA_SERVER,
@@ -136,7 +129,7 @@ if not parts_json.exists():
         seed=SEED,
     )
     mapping_test = hier_dirichlet_indices(
-        hf_test,
+        test_labels,
         NUM_SERVERS,
         CLIENTS_PER_SERVER_LIST,
         alpha_server=ALPHA_SERVER,

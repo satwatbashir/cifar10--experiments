@@ -5,11 +5,10 @@ import torch.nn as nn
 from typing import Any, Dict, List, Union
 
 from flwr.client import ClientApp, NumPyClient
-from flwr.common import ndarrays_to_parameters, parameters_to_ndarrays, Parameters, NDArrays
+from flwr.common import parameters_to_ndarrays, Parameters, NDArrays
 
 from fedge.task import Net, load_data, set_weights, test, get_weights, DATA_FLAGS, set_global_seed
 import time  # For computation and comms cost tracking
-import pickle  # For measuring size of metrics payload
 
 
 class FlowerClient(NumPyClient):
@@ -174,7 +173,7 @@ def client_fn(context):
     trainloader, valloader, n_classes = load_data(
         dataset_flag, pid, num_parts, 
         batch_size=context.run_config.get("batch_size", 32),
-        alpha=context.run_config.get("dirichlet_alpha", 0.3),
+        alpha=context.run_config.get("dirichlet_alpha", 0.5),
         seed=base_seed,
     )
     sample, _ = next(iter(trainloader))

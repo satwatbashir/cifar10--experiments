@@ -1,26 +1,19 @@
 """fedge: A Flower / PyTorch app."""
 
-from flwr.common import Context, ndarrays_to_parameters, Metrics
+from flwr.common import Context, ndarrays_to_parameters, Metrics, parameters_to_ndarrays
 from flwr.server import ServerApp, ServerAppComponents, ServerConfig
 from flwr.server.strategy import FedProx
 from fedge.task import Net, get_weights, load_data, set_weights, test, set_global_seed
 from typing import List, Tuple
-import os, csv
+import os
+import csv
 import numpy as np
 import torch
-from fedge.task import DATA_FLAGS
-# server_app.py — add this import at the top with the others
-from flwr.common import parameters_to_ndarrays
 
 
 # Ensure metrics directory exists
 os.makedirs("metrics", exist_ok=True)
 strategy: FedProx  # will be set in server_fn below
-
-# For tracking distributed metrics rounds
-dist_round_counter = {"value": 1}
-# For tracking fit metrics rounds
-fit_round_counter = {"value": 1}
  
 
 # Centralized convergence tracker
@@ -123,7 +116,6 @@ def _evaluate_and_log_central_impl(dataset_flag: str, round_num: int, parameters
     conv_metrics = ctracker.update(round_num, test_loss, test_acc)
     rec.update(conv_metrics)
 
-    import os, csv
     fieldnames = [
         "round",
         "central_train_loss",
@@ -159,7 +151,7 @@ def server_fn(context: Context):
     
     # FedProx hyperparameters
     proximal_mu = context.run_config.get("proximal_mu", 0.01)
-    dirichlet_alpha = context.run_config.get("dirichlet_alpha", 0.3)
+    dirichlet_alpha = context.run_config.get("dirichlet_alpha", 0.5)
 
     # Seed handling for this run
     seed = int(context.run_config.get("seed", 0))
@@ -168,6 +160,10 @@ def server_fn(context: Context):
     # Per-seed metrics directory
     metrics_dir = os.path.join("metrics", f"seed_{seed}")
     os.makedirs(metrics_dir, exist_ok=True)
+
+    # Round counters (local to this server run, captured by closures)
+    dist_round_counter = {"value": 1}
+    fit_round_counter = {"value": 1}
 
     trainloader, testloader, num_classes = load_data(dataset_flag, partition_id=0, num_partitions=1, batch_size=1, alpha=dirichlet_alpha, seed=seed)
 
@@ -194,7 +190,6 @@ def server_fn(context: Context):
 
         Appends all metrics to f"{metrics_dir}/distributed_metrics.csv".
         """
-        global dist_round_counter
         round_num = dist_round_counter["value"]
         # Print distributed evaluation per-client metrics to console
         print(f"\n=== DISTRIBUTED EVAL (Round {round_num}) ===")
@@ -202,10 +197,8 @@ def server_fn(context: Context):
             print(f"Client {idx+1}: test_loss={m['test_loss']:.4f}, test_acc={m['test_accuracy']:.4f}")
 
         # 1) Basic distributed metrics (clean version, no worst/best)
-        n_total = sum(n for n, _ in metrics_list)
         accs   = [m["test_accuracy"] for _, m in metrics_list]
         losses = [m["test_loss"]     for _, m in metrics_list]
-
         n_total = sum(n for n, _ in metrics_list)
         avg_acc  = float(sum(n * m["test_accuracy"] for n, m in metrics_list) / max(1, n_total))
         avg_loss = float(sum(n * m["test_loss"]      for n, m in metrics_list) / max(1, n_total))
@@ -282,7 +275,6 @@ def server_fn(context: Context):
 
     def aggregate_fit_metrics_seeded(metrics_list: List[Tuple[int, Metrics]]) -> Metrics:
         """Aggregate and log metrics returned by client `fit`, per-seed directory."""
-        global fit_round_counter
         round_num = fit_round_counter["value"]
 
         comp_times = [m.get("comp_time_sec", 0.0) for _, m in metrics_list]

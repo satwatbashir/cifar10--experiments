@@ -234,8 +234,7 @@ class CloudFedAvg(FedAvg):
         
         # Handle failures
         if failures:
-            for f in failures:
-                pass
+            logger.warning(f"[Cloud] {len(failures)} proxy client(s) failed during fit")
 
         # Call parent aggregation
         agg = super().aggregate_fit(rnd, results, failures)
@@ -324,14 +323,9 @@ class CloudFedAvg(FedAvg):
         Just “print-and-forward” the evaluation metrics.  If we are on the *last* server-round *of the final global round*, create a final completion signal.
         """
         current_global = self.current_global_round
-        
-        for sid, eval_res in results:
-            acc = eval_res.metrics.get("accuracy", float("nan"))
-            
+
         if failures:
-            for f in failures:
-                pass
-                
+            logger.warning(f"[Cloud] {len(failures)} proxy client(s) failed during evaluate")
 
         # Call super and unpack exactly two values
         merged = super().aggregate_evaluate(rnd, results, failures)

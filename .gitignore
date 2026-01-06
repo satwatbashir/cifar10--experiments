@@ -2,23 +2,35 @@
 __pycache__/
 *.pyc
 *.pyo
+*.pyd
+*$py.class
 
 # Virtualenvs
 .venv/
 venv/
 env/
+.Python
 
 # Data/artifacts/logs (root and all subfolders)
 data/
 **/data/
 metrics/
 **/metrics/
+hf_cache/
+**/hf_cache/
+archive/
+**/archive/
 
 # Global experiment outputs
 cifar10-metrics/
-cifar10-seed/*.csv
-cifar10-seed/metrics/
-cifar10-seed/personalization_analysis/*.csv
+*.csv
+**/*.csv
+
+# Plot folders and scripts
+plots/
+**/plots/
+*plot*.py
+**/*plot*.py
 
 # Training run artefacts
 runs/
@@ -31,6 +43,8 @@ signals/
 **/signals/
 save/
 **/save/
+Seed*/
+**/Seed*/
 
 # Large binary artefacts
 *.tar
@@ -39,6 +53,11 @@ save/
 *.pt
 *.pth
 *.onnx
+*.pkl
+*.pickle
+
+# Signal files (runtime coordination)
+*.signal
 
 # Logs
 *.log

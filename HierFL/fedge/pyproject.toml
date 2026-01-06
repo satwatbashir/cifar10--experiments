@@ -46,4 +46,4 @@ global_rounds = 150
 server_rounds_per_global = 1
 cloud_port = 6000
 alpha_server = 0.5
-alpha_client = 1
+alpha_client = 0.3
