@@ -161,6 +161,7 @@ def server_fn(context: Context):
     # Read from config - NO FALLBACKS (all values must come from pyproject.toml)
     num_rounds = context.run_config["num-server-rounds"]
     fraction_fit = context.run_config["fraction-fit"]
+    fraction_evaluate = context.run_config["fraction-evaluate"]
     min_available_clients = context.run_config["min_available_clients"]
 
     # FedProx hyperparameters
@@ -341,7 +342,7 @@ def server_fn(context: Context):
     strategy = FedProx(
         proximal_mu=proximal_mu,
         fraction_fit=fraction_fit,
-        fraction_evaluate=1.0,
+        fraction_evaluate=fraction_evaluate,
         min_available_clients=min_available_clients,
         initial_parameters=parameters,
         fit_metrics_aggregation_fn=aggregate_fit_metrics_seeded,
