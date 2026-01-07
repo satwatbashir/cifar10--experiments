@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Union
 from flwr.client import ClientApp, NumPyClient
 from flwr.common import parameters_to_ndarrays, Parameters, NDArrays
 
-from fedge.task import ResNet18, load_data, set_weights, test, get_weights, DATA_FLAGS, set_global_seed
+from fedge.task import Net, load_data, set_weights, test, get_weights, DATA_FLAGS, set_global_seed
 import time  # For computation and comms cost tracking
 
 
@@ -180,8 +180,8 @@ def client_fn(context):
         seed=base_seed,
     )
 
-    # ResNet-18 for CIFAR-10 (~11.2M params)
-    net = ResNet18(num_classes=n_classes)
+    # LeNet (NIID-Bench CNN) for CIFAR-10 (~62K params)
+    net = Net(n_class=n_classes)
 
     # 2) Return NumPyClient
     return FlowerClient(

@@ -3,7 +3,7 @@
 from flwr.common import Context, ndarrays_to_parameters, Metrics, parameters_to_ndarrays
 from flwr.server import ServerApp, ServerAppComponents, ServerConfig
 from flwr.server.strategy import FedProx
-from fedge.task import ResNet18, get_weights, load_data, set_weights, test, set_global_seed
+from fedge.task import Net, get_weights, load_data, set_weights, test, set_global_seed
 from typing import List, Tuple
 import os
 import csv
@@ -102,8 +102,8 @@ def _evaluate_and_log_central_impl(dataset_flag: str, round_num: int, parameters
         testloader = _CENTRAL_EVAL_CACHE["testloader"]
         num_classes = _CENTRAL_EVAL_CACHE["num_classes"]
 
-    # 2) Build ResNet-18 model & load global params
-    net = ResNet18(num_classes=num_classes)
+    # 2) Build LeNet model & load global params
+    net = Net(n_class=num_classes)
 
     nds = parameters_to_ndarrays(parameters) if not isinstance(parameters, list) else parameters
     set_weights(net, nds)  # only this one
@@ -187,8 +187,8 @@ def server_fn(context: Context):
         alpha=dirichlet_alpha, seed=seed
     )
 
-    # Initialize ResNet-18 model for initial parameters
-    ndarrays = get_weights(ResNet18(num_classes=num_classes))
+    # Initialize LeNet model for initial parameters
+    ndarrays = get_weights(Net(n_class=num_classes))
     parameters = ndarrays_to_parameters(ndarrays)
 
     def eval_fn(round_num, parameters, config):

@@ -98,6 +98,35 @@ def ResNet18(num_classes=10):
     """ResNet-18 for CIFAR-10 (~11.2M parameters)"""
     return ResNet(BasicBlock, [2, 2, 2, 2], num_classes=num_classes)
 
+# ───────────────────────── LeNet (NIID-Bench CNN) ──────────────────────────
+# Standard NIID-Bench model for CIFAR-10 (~62K parameters)
+# Reference: Li et al. (2022) ICDE - NIID-Bench benchmark
+# Expected accuracy: 65-70% with Dir(0.5), 10 clients, 50 rounds
+
+class Net(nn.Module):
+    """LeNet-style CNN for CIFAR-10 (NIID-Bench standard)."""
+    def __init__(self, in_ch: int = 3, img_h: int = 32, img_w: int = 32, n_class: int = 10):
+        super().__init__()
+        self.conv1 = nn.Conv2d(in_ch, 6, kernel_size=5)     # 3x32x32 -> 6x28x28
+        self.pool  = nn.MaxPool2d(2, 2)                     # -> 6x14x14
+        self.conv2 = nn.Conv2d(6, 16, kernel_size=5)        # -> 16x10x10 -> pool -> 16x5x5
+        # compute flatten dim dynamically
+        with torch.no_grad():
+            x = self.pool(F.relu(self.conv1(torch.zeros(1, in_ch, img_h, img_w))))
+            x = self.pool(F.relu(self.conv2(x)))
+            flat = x.view(1, -1).size(1)
+        self.fc1 = nn.Linear(flat, 120)
+        self.fc2 = nn.Linear(120, 84)
+        self.fc3 = nn.Linear(84, n_class)
+
+    def forward(self, x):
+        x = self.pool(F.relu(self.conv1(x)))
+        x = self.pool(F.relu(self.conv2(x)))
+        x = x.view(x.size(0), -1)
+        x = F.relu(self.fc1(x))
+        x = F.relu(self.fc2(x))
+        return self.fc3(x)
+
 # ─────────────── CIFAR-10 transforms (Flower style) ───────────────
 # Standard mean/std for CIFAR-10
 _CIFAR10_MEAN = (0.4914, 0.4822, 0.4465)
