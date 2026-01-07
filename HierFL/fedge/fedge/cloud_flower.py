@@ -20,7 +20,7 @@ from flwr.server.strategy import FedAvg
 from flwr.common import Metrics, NDArrays, Parameters, FitRes, parameters_to_ndarrays
 
 from fedge.utils import fs
-from fedge.task import ResNet18, load_data, test, set_weights, set_global_seed
+from fedge.task import Net, load_data, test, set_weights, set_global_seed
 import csv
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -39,7 +39,7 @@ CLOUD_PORT = hier["cloud_port"]
 CLIENTS_PER_SERVER = hier["clients_per_server"]
 app_cfg = cfg["tool"]["flwr"]["app"]["config"]
 SEED = int(app_cfg.get("seed", 0))
-BATCH_SIZE = int(app_cfg.get("batch_size", 32))
+BATCH_SIZE = int(app_cfg.get("batch_size", 64))
 
 # Require new directory structure (no fallback)
 use_new_dir_structure = True
@@ -358,7 +358,7 @@ class CloudFedAvg(FedAvg):
         # Centralized train/test eval over full dataset (partition_id=0, num_partitions=1)
         dataset_flag = "cifar10"
         trainloader, testloader, num_classes = load_data(dataset_flag, 0, 1, batch_size=BATCH_SIZE, seed=SEED)
-        model = ResNet18()
+        model = Net()
         nds = parameters_to_ndarrays(parameters) if not isinstance(parameters, list) else parameters
         set_weights(model, nds)
         device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")

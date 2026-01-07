@@ -77,11 +77,11 @@ app_cfg = cfg["tool"]["flwr"]["app"]["config"]
 TOTAL_LEAF_ROUNDS = app_cfg["num-server-rounds"]
 FRACTION_FIT = app_cfg["fraction-fit"]
 FRACTION_EVAL = app_cfg.get("fraction-evaluate", 1.0)
-raw_local_steps = app_cfg["local-steps"]
+raw_local_epochs = app_cfg["local-epochs"]
 # Baseline reproducibility
 SEED = int(app_cfg.get("seed", 0))
 # Allow overriding via env for smoke tests (keeps default behavior otherwise)
-LOCAL_STEPS = int(os.environ.get("LOCAL_STEPS_OVERRIDE", raw_local_steps))
+LOCAL_EPOCHS = int(os.environ.get("LOCAL_EPOCHS_OVERRIDE", raw_local_epochs))
 
 # ──────────────────────────────────────────────────────────────────────────────
 #  Timeouts, maximum wait attempts, etc.
@@ -368,7 +368,7 @@ def launch_leaf_servers(global_round: int, start_round: int) -> int:
                 "--partition_id",   str(cid),
                 "--num_partitions", str(n_cli),
                 "--dataset_flag",   "cifar10",       # always "cifar10" for CIFAR-10 dataset
-                "--local_steps",   str(LOCAL_STEPS),
+                "--local_epochs",  str(LOCAL_EPOCHS),
                 "--server_addr",    f"127.0.0.1:{port}",
             ]
 

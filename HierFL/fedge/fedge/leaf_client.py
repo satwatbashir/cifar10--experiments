@@ -15,7 +15,7 @@ import grpc
 from flwr.client import NumPyClient, start_client
 
 # Import your task utilities:
-from fedge.task import ResNet18, load_data, set_weights, train, test, get_weights, set_global_seed
+from fedge.task import Net, load_data, set_weights, train, test, get_weights, set_global_seed
 
 # ─── Logging setup ───────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -32,11 +32,11 @@ for name in ("flwr", "ece", "grpc"):
 # Flower NumPyClient implementation
 # =============================================================================
 class FlowerClient(NumPyClient):
-    def __init__(self, net, trainloader, valloader, local_steps):
+    def __init__(self, net, trainloader, valloader, local_epochs):
         self.net = net
         self.trainloader = trainloader
         self.valloader = valloader
-        self.local_steps = local_steps
+        self.local_epochs = local_epochs
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         self.net.to(self.device)
 
@@ -50,7 +50,7 @@ class FlowerClient(NumPyClient):
         return [val.cpu().numpy() for _, val in self.net.state_dict().items()]
 
     def fit(self, parameters, config):
-        """Fit model, record communication and computation metrics (baseline schema)."""
+        """Fit model for local_epochs full passes over dataset (matches FedProx)."""
         cid = os.environ.get("CLIENT_ID", "")
         # Communication: bytes received
         try:
@@ -62,35 +62,31 @@ class FlowerClient(NumPyClient):
         set_weights(self.net, parameters)
         set_end = time.perf_counter()
 
-        # Local training loop for exactly `local_steps` batches
+        # Local training loop for `local_epochs` full passes over dataset
         optimizer = torch.optim.SGD(self.net.parameters(), lr=0.01)
         criterion = torch.nn.CrossEntropyLoss()
         self.net.train()
-        all_losses: list[float] = []
+        all_losses = []
         total_correct = 0
         total_seen = 0
-        data_iter = iter(self.trainloader)
-        steps = 0
-        while steps < self.local_steps:
-            try:
-                x, y = next(data_iter)
-            except StopIteration:
-                data_iter = iter(self.trainloader)
-                x, y = next(data_iter)
-            x, y = x.to(self.device), y.to(self.device)
-            if y.ndim > 1:
-                y = y.squeeze()
-            y = y.long()
-            optimizer.zero_grad()
-            logits = self.net(x)
-            loss = criterion(logits, y)
-            loss.backward()
-            optimizer.step()
-            all_losses.append(loss.item())
-            _, preds = torch.max(logits, 1)
-            total_correct += (preds == y).sum().item()
-            total_seen += y.size(0)
-            steps += 1
+        num_batches = 0
+
+        for _ in range(self.local_epochs):
+            for x, y in self.trainloader:
+                x, y = x.to(self.device), y.to(self.device)
+                if y.ndim > 1:
+                    y = y.squeeze()
+                y = y.long()
+                optimizer.zero_grad()
+                logits = self.net(x)
+                loss = criterion(logits, y)
+                loss.backward()
+                optimizer.step()
+                all_losses.append(loss.item())
+                _, preds = torch.max(logits, 1)
+                total_correct += (preds == y).sum().item()
+                total_seen += y.size(0)
+                num_batches += 1
 
         train_end = time.perf_counter()
         # Get updated weights and compute bytes sent
@@ -102,7 +98,6 @@ class FlowerClient(NumPyClient):
         end_time = time.perf_counter()
         # Compute times
         comp_time_sec = train_end - set_end
-        round_time = end_time - start_time
         # Compute training metrics
         train_loss_mean = float(np.mean(all_losses)) if all_losses else 0.0
         train_accuracy_mean = float(total_correct / max(1, total_seen)) if total_seen > 0 else 0.0
@@ -113,7 +108,7 @@ class FlowerClient(NumPyClient):
             "upload_bytes": int(bytes_up),
             "train_loss_mean": train_loss_mean,
             "train_accuracy_mean": train_accuracy_mean,
-            "num_inner_batches": int(self.local_steps),
+            "num_inner_batches": int(num_batches),
             "total_train_samples": int(len(self.trainloader.dataset)),
             "client_id": cid,
         }
@@ -154,7 +149,7 @@ def main():
         required=True,
         help="Dataset to load (cifar10)",
     )
-    parser.add_argument("--local_steps", type=int, required=True)
+    parser.add_argument("--local_epochs", type=int, required=True)
     parser.add_argument("--server_addr", type=str, default=os.getenv("LEAF_ADDRESS", "127.0.0.1:6100"))
     parser.add_argument(
         "--max_retries", type=int, default=5, help="Max gRPC connection retries"
@@ -198,13 +193,11 @@ def main():
         indices_test=indices_test,
     )
 
-    # 4) Instantiate your Net with appropriate channels & image size
-    sample, _ = next(iter(trainloader))
-    _, in_ch, H, W = sample.shape
-    net = ResNet18(num_classes=n_classes)
+    # 4) Instantiate LeNet model
+    net = Net(n_class=n_classes)
 
     # 5) Wrap in the FlowerClient
-    client = FlowerClient(net, trainloader, valloader, args.local_steps)
+    client = FlowerClient(net, trainloader, valloader, args.local_epochs)
 
     # 6) Connect (with retry logic) to the leaf server’s Flower endpoint
     retries = 0

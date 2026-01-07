@@ -24,8 +24,8 @@ cfg = toml.load(task_project_root / "pyproject.toml")
 hier = cfg["tool"]["flwr"]["hierarchy"]
 ALPHA_CLIENT = hier.get("alpha_client", 0.3)
 APP_CFG = cfg["tool"]["flwr"]["app"]["config"]
-DEFAULT_BATCH_SIZE = int(APP_CFG.get("batch_size", 32))
-DEFAULT_SEED = int(APP_CFG.get("seed", 0))
+DEFAULT_BATCH_SIZE = int(APP_CFG.get("batch_size", 64))
+DEFAULT_SEED = int(APP_CFG.get("seed", 42))
 
 # Decorator to suppress verbose prints and progress bars
 def suppress_output(func):
@@ -114,6 +114,35 @@ class ResNet(nn.Module):
 def ResNet18(num_classes=10):
     """ResNet-18 for CIFAR-10 (~11.2M parameters)"""
     return ResNet(BasicBlock, [2, 2, 2, 2], num_classes=num_classes)
+
+# ───────────────────────── LeNet (NIID-Bench CNN) ──────────────────────────
+# Standard NIID-Bench model for CIFAR-10 (~62K parameters)
+# Reference: Li et al. (2022) ICDE - NIID-Bench benchmark
+# Expected accuracy: 65-70% with Dir(0.5), 10 clients, 50 rounds
+
+class Net(nn.Module):
+    """LeNet-style CNN for CIFAR-10 (NIID-Bench standard)."""
+    def __init__(self, in_ch: int = 3, img_h: int = 32, img_w: int = 32, n_class: int = 10):
+        super().__init__()
+        self.conv1 = nn.Conv2d(in_ch, 6, kernel_size=5)     # 3x32x32 -> 6x28x28
+        self.pool  = nn.MaxPool2d(2, 2)                     # -> 6x14x14
+        self.conv2 = nn.Conv2d(6, 16, kernel_size=5)        # -> 16x10x10 -> pool -> 16x5x5
+        # compute flatten dim dynamically
+        with torch.no_grad():
+            x = self.pool(F.relu(self.conv1(torch.zeros(1, in_ch, img_h, img_w))))
+            x = self.pool(F.relu(self.conv2(x)))
+            flat = x.view(1, -1).size(1)
+        self.fc1 = nn.Linear(flat, 120)
+        self.fc2 = nn.Linear(120, 84)
+        self.fc3 = nn.Linear(84, n_class)
+
+    def forward(self, x):
+        x = self.pool(F.relu(self.conv1(x)))
+        x = self.pool(F.relu(self.conv2(x)))
+        x = x.view(x.size(0), -1)
+        x = F.relu(self.fc1(x))
+        x = F.relu(self.fc2(x))
+        return self.fc3(x)
 
 # ─────────────── CIFAR-10 transforms (Flower style) ───────────────
 # Standard mean/std for CIFAR-10
@@ -228,40 +257,28 @@ def load_data(
     return trainloader, testloader, n_class
 
 # ─────────────────── train / test / weights ───────────────────
-def train(net: nn.Module, loader: DataLoader, epochs: int, device: torch.device):
-    """Local training on *epochs* mini-batch updates (matches HierFL).
+def train(net: nn.Module, loader: DataLoader, epochs: int, device: torch.device, lr: float = 0.01):
+    """Train for `epochs` full passes over the dataset.
 
-    In the original HierFL implementation the hyper-parameter `num_local_update`
-    counts **optimizer steps**, not full passes over the dataset.  This revised
-    loop keeps the same semantics: each iteration consumes exactly one batch; if
-    we reach the end of the loader we simply restart it.
+    Changed from step-based to epoch-based training to match FedProx.
+    Each epoch iterates over all batches in the DataLoader.
     """
     net.to(device)
-    opt = torch.optim.SGD(net.parameters(), lr=0.01, momentum=0.0, weight_decay=0.0)
-    scheduler = torch.optim.lr_scheduler.ExponentialLR(opt, gamma=0.995)
+    opt = torch.optim.SGD(net.parameters(), lr=lr, momentum=0.0, weight_decay=0.0)
     ce = nn.CrossEntropyLoss()
     net.train()
 
-    data_iter = iter(loader)
-    step = 0
     loss = 0.0
-    while step < epochs:  # epochs == #updates
-        try:
-            images, labels = next(data_iter)
-        except StopIteration:
-            data_iter = iter(loader)
-            images, labels = next(data_iter)
-        images, labels = images.to(device), labels.to(device)
-        if labels.ndim > 1:
-            labels = labels.squeeze(-1)
-        # Cast to required dtype for CrossEntropyLoss
-        labels = labels.long()
-        opt.zero_grad()
-        loss = ce(net(images), labels)
-        loss.backward()
-        opt.step()
-        scheduler.step()  # decay LR every update, as in HierFL
-        step += 1
+    for _ in range(epochs):
+        for images, labels in loader:
+            images, labels = images.to(device), labels.to(device)
+            if labels.ndim > 1:
+                labels = labels.squeeze(-1)
+            labels = labels.long()
+            opt.zero_grad()
+            loss = ce(net(images), labels)
+            loss.backward()
+            opt.step()
     return float(loss)
 
 def test(net: nn.Module, loader: DataLoader, device: torch.device):

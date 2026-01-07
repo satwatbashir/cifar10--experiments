@@ -18,7 +18,7 @@ from flwr.common import Metrics, ndarrays_to_parameters, parameters_to_ndarrays,
 from flwr.server import start_server, ServerConfig
 from flwr.server.strategy import FedAvg
 
-from fedge.task import ResNet18, get_weights, set_weights, load_data, test, set_global_seed
+from fedge.task import Net, get_weights, set_weights, load_data, test, set_global_seed
 import torch
 
 # Configure logging
@@ -208,7 +208,7 @@ class LeafFedAvg(FedAvg):
 
         # 3) Server evaluation on union of this server's client test shards (from PARTITIONS_JSON)
         local_rnd = rnd - 1
-        model = ResNet18()
+        model = Net()
         if hasattr(self, "latest_parameters") and self.latest_parameters is not None:
             nds = parameters_to_ndarrays(self.latest_parameters)
             set_weights(model, nds)
@@ -223,7 +223,7 @@ class LeafFedAvg(FedAvg):
         server_map_test = combined["test"][str(self.server_id)]
         indices_test = [idx for lst in server_map_test.values() for idx in lst]
         # Build test loader as union for this server
-        _, testloader_local, _ = load_data("cifar10", 0, 1, batch_size=32, indices_test=indices_test)
+        _, testloader_local, _ = load_data("cifar10", 0, 1, batch_size=64, indices_test=indices_test)
         l_loss, l_acc = test(model, testloader_local, device)
         n = len(testloader_local.dataset)
         server_partition_loss = float(l_loss) if n > 0 else None
@@ -273,7 +273,7 @@ def handle_signal(sig, frame):
             model_path = model_dir / f"server_{server_id}.pkl"
             
             # Try to get a model instance
-            net = ResNet18()
+            net = Net()
             ndarrays = get_weights(net)
             
             # Save with a default example count

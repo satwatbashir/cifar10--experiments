@@ -15,7 +15,7 @@ import torch
 import toml
 import grpc
 import logging
-from fedge.task import ResNet18, load_data, set_weights, test, get_weights, set_global_seed
+from fedge.task import Net, load_data, set_weights, test, get_weights, set_global_seed
 from fedge.utils import fs
 
 # Configure logging
@@ -76,7 +76,7 @@ class ProxyClient(NumPyClient):
         base_seed = int(cfg["tool"]["flwr"]["app"]["config"].get("seed", 0))
         set_global_seed(base_seed)
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-        self.net = ResNet18().to(self.device)
+        self.net = Net().to(self.device)
         set_weights(self.net, self.ndarrays)
         
         # Load server-specific TEST indices from mandatory partition JSON

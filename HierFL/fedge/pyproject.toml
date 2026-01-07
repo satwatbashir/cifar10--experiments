@@ -27,9 +27,9 @@ clientapp = "fedge.client_app:app"
 [tool.flwr.app.config]
 num-server-rounds = 1
 fraction-fit = 1.0
-local-steps = 5           # Training batches per client per round (NIID-Bench: 5 epochs equivalent)
+local-epochs = 5          # Full epochs per client (matches FedProx)
 # Baseline run configuration
-seed = 2
+seed = 42                 # Matches FedProx for fair comparison
 batch_size = 64           # Literature: NIID-Bench, MOON use 64
 learning_rate = 0.01      # Literature standard
 
