@@ -28,12 +28,12 @@ clientapp = "fedge.client_app:app"
 # NIID-Bench Standard Settings + ResNet-18
 # Reference: Li et al. (2022) ICDE - NIID-Bench benchmark
 num-server-rounds = 200   # NIID-Bench: 200 rounds for reported accuracy
-fraction-fit = 0.3        # 30% client participation
+fraction-fit = 1.0        # Full client participation (NIID-Bench standard)
 fraction-evaluate = 0.0   # Skip distributed eval (use centralized only)
 min_available_clients = 10  # Match num-supernodes
 # FedProx hyperparameters
 proximal_mu = 0.01        # Standard FedProx mu
-local-epochs = 1          # Quick test (change to 5 for NIID-Bench)
+local-epochs = 5          # NIID-Bench standard
 batch_size = 64           # NIID-Bench standard
 learning_rate = 0.01      # NIID-Bench standard
 # Data heterogeneity
