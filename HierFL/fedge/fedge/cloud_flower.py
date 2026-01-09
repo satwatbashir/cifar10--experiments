@@ -21,6 +21,7 @@ from flwr.common import Metrics, NDArrays, Parameters, FitRes, parameters_to_nda
 
 from fedge.utils import fs
 from fedge.task import Net, load_data, test, set_weights, set_global_seed
+from fedge.stats import _mean_std_ci
 import csv
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -390,14 +391,21 @@ class CloudFedAvg(FedAvg):
             writer.writerow({"round": round_num, **rec})
 
     def _write_distributed_and_fit_csvs(self, round_num: int):
-        # Aggregate across all servers' per-client CSVs
+        """
+        Aggregate metrics from all leaf servers' CSVs.
+        Uses t-distribution CI (more accurate for small samples) instead of 1.96.
+        Reads each file only once to avoid duplicate I/O.
+        """
+        # ──────────────────────────────────────────────────────────────────────
+        # SINGLE PASS: Read all server data once and cache it
+        # ──────────────────────────────────────────────────────────────────────
         all_acc = []
         all_loss = []
         all_weights = []
-        # Stable per-client maps by global client index
         per_client_acc_map: Dict[int, float] = {}
         per_client_loss_map: Dict[int, float] = {}
-        # Efficiency accumulators from FIT metrics
+
+        # FIT metrics accumulators
         comp_times = []
         up_bytes = []
         down_bytes = []
@@ -405,52 +413,74 @@ class CloudFedAvg(FedAvg):
         comm_times = []
         inner_batches = []
         total_train_samples = []
+        train_losses = []
+        train_accs = []
+
+        # Per-server cached data for servers_metrics.csv
+        per_server_data: Dict[int, Dict[str, Any]] = {}
 
         for sid in range(NUM_SERVERS):
             base_dir = fs.leaf_server_dir(project_root, sid)
-            # EVAL metrics
-            eval_csv = base_dir / "client_eval_metrics.csv"
-            with open(eval_csv, "r", encoding="utf-8") as f:
-                reader = csv.DictReader(f)
-                rows = [r for r in reader if int(r.get("global_round", -1)) == round_num]
-            # Compute global index offset for this server (supports non-uniform CPS)
+
+            # Compute global index offset for this server
             if isinstance(CLIENTS_PER_SERVER, list):
                 cps = CLIENTS_PER_SERVER[sid]
                 offset = sum(CLIENTS_PER_SERVER[:sid])
             else:
                 cps = CLIENTS_PER_SERVER
                 offset = sid * cps
-            for r in rows:
+
+            # ──────────────────────────────────────────────────────────────────
+            # Read EVAL metrics (once per server)
+            # ──────────────────────────────────────────────────────────────────
+            eval_csv = base_dir / "client_eval_metrics.csv"
+            server_accs = []
+            server_losses = []
+            with open(eval_csv, "r", encoding="utf-8") as f:
+                reader = csv.DictReader(f)
+                eval_rows = [r for r in reader if int(r.get("global_round", -1)) == round_num]
+
+            for r in eval_rows:
                 loss = float(r["client_test_loss"]) if r["client_test_loss"] != "" else 0.0
                 acc = float(r["client_test_accuracy"]) if r["client_test_accuracy"] != "" else 0.0
                 n = int(r.get("num_examples", 0))
+
                 all_acc.append(acc)
                 all_loss.append(loss)
                 all_weights.append(n)
-                # Parse local client id from string like "leaf_{sid}_client_{cid}" (allow optional suffixes like _gr{g})
+                server_accs.append(acc)
+                server_losses.append(loss)
+
+                # Parse local client id
                 try:
                     id_str = str(r.get("client_id", ""))
                     m = re.search(r"client_(\d+)", id_str)
                     cid_local = int(m.group(1)) if m else None
                 except Exception:
-                    # Fallback: skip mapping if unparsable
                     cid_local = None
                 if cid_local is not None:
                     gidx = offset + cid_local
                     per_client_acc_map[gidx] = acc
                     per_client_loss_map[gidx] = loss
 
-            # FIT metrics
+            # ──────────────────────────────────────────────────────────────────
+            # Read FIT metrics (once per server)
+            # ──────────────────────────────────────────────────────────────────
             fit_csv = base_dir / "client_fit_metrics.csv"
+            server_comp = []
+            server_upb = []
+            server_dnb = []
             with open(fit_csv, "r", encoding="utf-8") as f:
                 reader = csv.DictReader(f)
-                rows = [r for r in reader if int(r.get("global_round", -1)) == round_num]
-            for r in rows:
+                fit_rows = [r for r in reader if int(r.get("global_round", -1)) == round_num]
+
+            for r in fit_rows:
                 comp = float(r.get("comp_time_sec", 0.0))
                 dn = float(r.get("download_bytes", 0))
                 up = float(r.get("upload_bytes", 0))
                 comm = (dn + up) / (self.network_speed_mbps * 1e6 / 8.0) if self.network_speed_mbps > 0 else 0.0
                 wall = comp + comm
+
                 comp_times.append(comp)
                 down_bytes.append(dn)
                 up_bytes.append(up)
@@ -459,33 +489,60 @@ class CloudFedAvg(FedAvg):
                 inner_batches.append(float(r.get("num_inner_batches", 0)))
                 total_train_samples.append(float(r.get("total_train_samples", 0)))
 
-        # Weighted averages
+                server_comp.append(comp)
+                server_upb.append(up)
+                server_dnb.append(dn)
+
+                # Collect train loss/acc for fit_metrics.csv
+                if r.get("client_train_loss_mean", "") != "":
+                    train_losses.append(float(r["client_train_loss_mean"]))
+                if r.get("client_train_accuracy_mean", "") != "":
+                    train_accs.append(float(r["client_train_accuracy_mean"]))
+
+            # Cache per-server data for servers_metrics.csv
+            server_comms = [(u + d) / (self.network_speed_mbps * 1e6 / 8.0) if self.network_speed_mbps > 0 else 0.0
+                           for u, d in zip(server_upb, server_dnb)]
+            server_walls = [c + cm for c, cm in zip(server_comp, server_comms)]
+            per_server_data[sid] = {
+                "accs": server_accs,
+                "losses": server_losses,
+                "comp": server_comp,
+                "upb": server_upb,
+                "dnb": server_dnb,
+                "comms": server_comms,
+                "walls": server_walls,
+            }
+
+        # ──────────────────────────────────────────────────────────────────────
+        # Compute statistics using t-distribution CI
+        # ──────────────────────────────────────────────────────────────────────
         n_total = sum(all_weights) if all_weights else 0
         avg_acc = float(sum(w * a for w, a in zip(all_weights, all_acc)) / max(1, n_total)) if all_weights else 0.0
         avg_loss = float(sum(w * l for w, l in zip(all_weights, all_loss)) / max(1, n_total)) if all_weights else 0.0
-        acc_sd = float(np.std(all_acc)) if all_acc else 0.0
-        loss_sd = float(np.std(all_loss)) if all_loss else 0.0
-        # Determine total number of clients for stable column ordering
+
+        # Use t-distribution CI (more accurate for small sample sizes)
+        _, acc_sd, acc_ci_lo, acc_ci_hi = _mean_std_ci(all_acc)
+        _, loss_sd, loss_ci_lo, loss_ci_hi = _mean_std_ci(all_loss)
+
         total_clients = sum(CLIENTS_PER_SERVER) if isinstance(CLIENTS_PER_SERVER, list) else (NUM_SERVERS * CLIENTS_PER_SERVER)
-        n_clients = total_clients
-        acc_se = acc_sd / (n_clients ** 0.5) if n_clients > 0 else 0.0
-        loss_se = loss_sd / (n_clients ** 0.5) if n_clients > 0 else 0.0
 
         distributed = {
             "avg_accuracy": avg_acc,
             "avg_loss": avg_loss,
             "accuracy_std": acc_sd,
             "loss_std": loss_sd,
-            "acc_ci95_lo": float(avg_acc - 1.96 * acc_se),
-            "acc_ci95_hi": float(avg_acc + 1.96 * acc_se),
-            "loss_ci95_lo": float(avg_loss - 1.96 * loss_se),
-            "loss_ci95_hi": float(avg_loss + 1.96 * loss_se),
+            "acc_ci95_lo": float(acc_ci_lo),
+            "acc_ci95_hi": float(acc_ci_hi),
+            "loss_ci95_lo": float(loss_ci_lo),
+            "loss_ci95_hi": float(loss_ci_hi),
         }
-        # Per-client columns (0-based contiguous, stable by global client index)
+
+        # Per-client columns
         for idx in range(total_clients):
             distributed[f"client_{idx}_accuracy"] = float(per_client_acc_map.get(idx, 0.0))
         for idx in range(total_clients):
             distributed[f"client_{idx}_loss"] = float(per_client_loss_map.get(idx, 0.0))
+
         # Efficiency bundle
         distributed.update({
             "avg_comp_time_sec": float(np.mean(comp_times)) if comp_times else 0.0,
@@ -502,6 +559,7 @@ class CloudFedAvg(FedAvg):
             "avg_comm_time_sec": float(np.mean(comm_times)) if comm_times else 0.0,
             "total_comm_time_sec": float(np.sum(comm_times)) if comm_times else 0.0,
         })
+
         # Write distributed CSV
         dist_path = metrics_dir / "distributed_metrics.csv"
         with open(dist_path, "a", newline="") as f:
@@ -511,21 +569,9 @@ class CloudFedAvg(FedAvg):
                 writer.writeheader()
             writer.writerow({"round": round_num, **distributed})
 
-        # FIT aggregation: compute from per-client fit values we already collected
-        # We need lists of train_loss_mean and train_accuracy_mean across all clients
-        train_losses = []
-        train_accs = []
-        for sid in range(NUM_SERVERS):
-            base_dir = fs.leaf_server_dir(project_root, sid)
-            fit_csv = base_dir / "client_fit_metrics.csv"
-            with open(fit_csv, "r", encoding="utf-8") as f:
-                reader = csv.DictReader(f)
-                rows = [r for r in reader if int(r.get("global_round", -1)) == round_num]
-            for r in rows:
-                if r.get("client_train_loss_mean", "") != "":
-                    train_losses.append(float(r["client_train_loss_mean"]))
-                if r.get("client_train_accuracy_mean", "") != "":
-                    train_accs.append(float(r["client_train_accuracy_mean"]))
+        # ──────────────────────────────────────────────────────────────────────
+        # Write fit_metrics.csv (using already-collected data, no re-read)
+        # ──────────────────────────────────────────────────────────────────────
         fit_row = {
             "avg_train_loss": float(np.mean(train_losses)) if train_losses else 0.0,
             "std_train_loss": float(np.std(train_losses)) if train_losses else 0.0,
@@ -553,34 +599,21 @@ class CloudFedAvg(FedAvg):
                 writer.writeheader()
             writer.writerow({"round": round_num, **fit_row})
 
-        # Optional servers_metrics.csv with per-server aggregates
+        # ──────────────────────────────────────────────────────────────────────
+        # Write servers_metrics.csv (using cached per-server data, no re-read)
+        # ──────────────────────────────────────────────────────────────────────
         servers_row: Dict[str, Any] = {}
         for sid in range(NUM_SERVERS):
-            base_dir = fs.leaf_server_dir(project_root, sid)
-            cps = CLIENTS_PER_SERVER[sid] if isinstance(CLIENTS_PER_SERVER, list) else CLIENTS_PER_SERVER
-            eval_csv = base_dir / "client_eval_metrics.csv"
-            with open(eval_csv, "r", encoding="utf-8") as f:
-                reader = csv.DictReader(f)
-                rows = [r for r in reader if int(r.get("global_round", -1)) == round_num]
-            accs = [float(r.get("client_test_accuracy", 0.0)) for r in rows]
-            losses = [float(r.get("client_test_loss", 0.0)) for r in rows]
-            fit_csv = base_dir / "client_fit_metrics.csv"
-            with open(fit_csv, "r", encoding="utf-8") as f:
-                reader = csv.DictReader(f)
-                fit_rows = [r for r in reader if int(r.get("global_round", -1)) == round_num]
-            comp = [float(r.get("comp_time_sec", 0.0)) for r in fit_rows]
-            upb = [float(r.get("upload_bytes", 0)) for r in fit_rows]
-            dnb = [float(r.get("download_bytes", 0)) for r in fit_rows]
-            comms = [(u + d) / (self.network_speed_mbps * 1e6 / 8.0) if self.network_speed_mbps > 0 else 0.0 for u, d in zip(upb, dnb)]
-            walls = [c + cm for c, cm in zip(comp, comms)]
-            servers_row[f"server{sid}_avg_accuracy"] = float(np.mean(accs)) if accs else 0.0
-            servers_row[f"server{sid}_avg_loss"] = float(np.mean(losses)) if losses else 0.0
-            servers_row[f"server{sid}_client_count"] = int(len(accs))
-            servers_row[f"server{sid}_avg_comp_time_sec"] = float(np.mean(comp)) if comp else 0.0
-            servers_row[f"server{sid}_avg_upload_MB"] = float(np.mean(upb)) / 1e6 if upb else 0.0
-            servers_row[f"server{sid}_avg_download_MB"] = float(np.mean(dnb)) / 1e6 if dnb else 0.0
-            servers_row[f"server{sid}_avg_wall_clock_sec"] = float(np.mean(walls)) if walls else 0.0
-            servers_row[f"server{sid}_avg_comm_time_sec"] = float(np.mean(comms)) if comms else 0.0
+            data = per_server_data[sid]
+            servers_row[f"server{sid}_avg_accuracy"] = float(np.mean(data["accs"])) if data["accs"] else 0.0
+            servers_row[f"server{sid}_avg_loss"] = float(np.mean(data["losses"])) if data["losses"] else 0.0
+            servers_row[f"server{sid}_client_count"] = int(len(data["accs"]))
+            servers_row[f"server{sid}_avg_comp_time_sec"] = float(np.mean(data["comp"])) if data["comp"] else 0.0
+            servers_row[f"server{sid}_avg_upload_MB"] = float(np.mean(data["upb"])) / 1e6 if data["upb"] else 0.0
+            servers_row[f"server{sid}_avg_download_MB"] = float(np.mean(data["dnb"])) / 1e6 if data["dnb"] else 0.0
+            servers_row[f"server{sid}_avg_wall_clock_sec"] = float(np.mean(data["walls"])) if data["walls"] else 0.0
+            servers_row[f"server{sid}_avg_comm_time_sec"] = float(np.mean(data["comms"])) if data["comms"] else 0.0
+
         if servers_row:
             srv_path = metrics_dir / "servers_metrics.csv"
             with open(srv_path, "a", newline="") as f:
