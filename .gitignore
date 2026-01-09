@@ -46,6 +46,10 @@ save/
 Seed*/
 **/Seed*/
 
+# GCP/cloud experiment results (keep local, don't push)
+gcp-results/
+**/gcp-results/
+
 # Large binary artefacts
 *.tar
 *.tar.gz
