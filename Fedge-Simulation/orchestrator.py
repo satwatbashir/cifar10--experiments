@@ -40,6 +40,7 @@ from fedge.task import (
 )
 from fedge.cluster_utils import cifar10_weight_clustering as weight_clustering
 from fedge.partitioning import hier_dirichlet_indices, write_partitions
+from fedge.stats import _mean_std_ci
 
 # Configure logging
 logging.basicConfig(
@@ -679,19 +680,27 @@ class SimulationOrchestrator:
             new_global.append(weighted_sum / total_samples)
         self.global_weights = new_global
 
-        # Compute round metrics with variance
+        # Compute round metrics with t-critical based 95% CI
         round_time = time.time() - round_start
         server_accuracies = [s.round_metrics[-1]["server_test_accuracy"] for s in self.leaf_servers]
-        avg_accuracy = np.mean(server_accuracies)
-        avg_loss = np.mean([s.round_metrics[-1]["server_test_loss"] for s in self.leaf_servers])
+        server_losses = [s.round_metrics[-1]["server_test_loss"] for s in self.leaf_servers]
+
+        # Use proper t-distribution CI calculation (consistent with HHAR)
+        acc_mean, acc_std, acc_ci_low, acc_ci_high = _mean_std_ci(server_accuracies)
+        loss_mean, loss_std, loss_ci_low, loss_ci_high = _mean_std_ci(server_losses)
 
         metrics = {
             "global_round": global_round,
-            "avg_accuracy": avg_accuracy,
-            "avg_loss": avg_loss,
-            "accuracy_std": np.std(server_accuracies),
-            "accuracy_min": np.min(server_accuracies),
-            "accuracy_max": np.max(server_accuracies),
+            "avg_accuracy": acc_mean,
+            "avg_loss": loss_mean,
+            "accuracy_std": acc_std,
+            "accuracy_ci_low": acc_ci_low,
+            "accuracy_ci_high": acc_ci_high,
+            "accuracy_min": min(server_accuracies),
+            "accuracy_max": max(server_accuracies),
+            "loss_std": loss_std,
+            "loss_ci_low": loss_ci_low,
+            "loss_ci_high": loss_ci_high,
             "num_clusters": len(self.cloud.cluster_parameters),
             "cluster_map": self.cloud.cluster_map.copy(),
             "round_time": round_time
@@ -704,8 +713,8 @@ class SimulationOrchestrator:
         for server in self.leaf_servers:
             self._save_server_round_metrics(server.server_id, server.round_metrics[-1])
 
-        logger.info(f"[Round {global_round}] acc={avg_accuracy:.4f}, loss={avg_loss:.4f}, "
-                   f"clusters={len(self.cloud.cluster_parameters)}, time={round_time:.1f}s")
+        logger.info(f"[Round {global_round}] acc={acc_mean:.4f} (CI: {acc_ci_low:.4f}-{acc_ci_high:.4f}), "
+                   f"loss={loss_mean:.4f}, clusters={len(self.cloud.cluster_parameters)}, time={round_time:.1f}s")
 
         return metrics
 
@@ -735,10 +744,12 @@ class SimulationOrchestrator:
         logger.info(f"[Orchestrator] Final accuracy: {final_acc:.4f}")
 
     def _save_global_round_metrics(self, metrics: Dict):
-        """Append one row to global_rounds.csv with variance metrics."""
+        """Append one row to global_rounds.csv with t-critical based 95% CI."""
         fieldnames = [
             "global_round", "avg_accuracy", "avg_loss",
-            "accuracy_std", "accuracy_min", "accuracy_max",
+            "accuracy_std", "accuracy_ci_low", "accuracy_ci_high",
+            "accuracy_min", "accuracy_max",
+            "loss_std", "loss_ci_low", "loss_ci_high",
             "num_clusters", "cluster_map", "round_time"
         ]
 
@@ -753,8 +764,13 @@ class SimulationOrchestrator:
                 "avg_accuracy": metrics["avg_accuracy"],
                 "avg_loss": metrics["avg_loss"],
                 "accuracy_std": metrics["accuracy_std"],
+                "accuracy_ci_low": metrics["accuracy_ci_low"],
+                "accuracy_ci_high": metrics["accuracy_ci_high"],
                 "accuracy_min": metrics["accuracy_min"],
                 "accuracy_max": metrics["accuracy_max"],
+                "loss_std": metrics["loss_std"],
+                "loss_ci_low": metrics["loss_ci_low"],
+                "loss_ci_high": metrics["loss_ci_high"],
                 "num_clusters": metrics["num_clusters"],
                 "cluster_map": json.dumps(metrics["cluster_map"]),
                 "round_time": metrics["round_time"]
