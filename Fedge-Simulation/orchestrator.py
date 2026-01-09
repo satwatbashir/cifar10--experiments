@@ -203,15 +203,17 @@ class SimulatedClient:
         ref_weights: Optional[List[np.ndarray]] = None
     ) -> Tuple[List[np.ndarray], int, Dict]:
         """Train locally and return updated weights."""
-        # Create global model (before training) for SCAFFOLD
-        global_net = Net()
-        set_weights(global_net, parameters)
-        global_net.to(self.device)
-
         # Create local model for training
         net = Net()
         set_weights(net, parameters)
         net.to(self.device)
+
+        # Only create global_net if SCAFFOLD is enabled (expensive to keep both)
+        global_net = None
+        if SCAFFOLD_ENABLED:
+            global_net = Net()
+            set_weights(global_net, parameters)
+            global_net.to(self.device)
 
         # Apply SCAFFOLD if enabled
         if SCAFFOLD_ENABLED and self.scaffold_manager:

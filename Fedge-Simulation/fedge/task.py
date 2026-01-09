@@ -526,32 +526,31 @@ def train(
                         loss = loss + (prox_mu / 2.0) * normalized_prox_loss
 
             loss.backward()
-            
-            # ENHANCED: Check for NaN gradients before SCAFFOLD correction
-            nan_grads = any(torch.isnan(p.grad).any() for p in net.parameters() if p.grad is not None)
-            if nan_grads:
-                logger.warning(f"NaN gradients detected in epoch {epoch}, batch {batch_idx}")
-                opt.zero_grad()
-                continue
-            
+
+            # NaN check only every 50 batches (expensive operation)
+            if batch_idx % 50 == 0:
+                nan_grads = any(torch.isnan(p.grad).any() for p in net.parameters() if p.grad is not None)
+                if nan_grads:
+                    logger.warning(f"NaN gradients detected in epoch {epoch}, batch {batch_idx}")
+                    opt.zero_grad()
+                    continue
+
             if scaffold_enabled and hasattr(net, "_scaffold_manager"):
                 net._scaffold_manager.apply_scaffold_correction(net, opt.param_groups[0]["lr"])
 
-            # ENHANCED: Gradient clipping with diagnostic logging
-            grad_norm = torch.nn.utils.clip_grad_norm_(net.parameters(), clip_val)
-            if grad_norm > clip_val:
-                logger.debug(f"Gradient clipped: norm={grad_norm:.4f} -> {clip_val}")
-            
+            # Gradient clipping (already efficient)
+            torch.nn.utils.clip_grad_norm_(net.parameters(), clip_val)
+
             opt.step()
-            
-            # ENHANCED: Check for NaN parameters after optimization step
-            nan_params = any(torch.isnan(p).any() for p in net.parameters())
-            if nan_params:
-                logger.error(f"NaN parameters detected after optimization step in epoch {epoch}")
-                return float('nan')
 
             running_loss += loss.item()
             total_batches += 1
+
+        # Check for NaN parameters only at end of each epoch (not every batch)
+        nan_params = any(torch.isnan(p).any() for p in net.parameters())
+        if nan_params:
+            logger.error(f"NaN parameters detected after epoch {epoch}")
+            return float('nan')
 
     if sched:
         sched.step()
