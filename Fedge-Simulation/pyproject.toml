@@ -30,7 +30,7 @@ packages = ["."]
 [tool.flwr.hierarchy]
 num_servers = 3
 clients_per_server = [5, 5, 5]
-global_rounds = 150
+global_rounds = 200
 server_rounds_per_global = 1
 # Note: cloud_port and server_base_port removed (not needed for in-memory simulation)
 weight_decay = 0.0001
