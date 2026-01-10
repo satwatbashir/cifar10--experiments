@@ -71,13 +71,20 @@ class LeafFedAvg(FedAvg):
         try:
             cfg = toml.load((Path(__file__).resolve().parent.parent) / "pyproject.toml")
             self.num_servers = cfg["tool"]["flwr"]["hierarchy"]["num_servers"]
+            cfg_seed = int(cfg["tool"]["flwr"]["app"]["config"].get("seed", 42))
         except Exception:
             self.num_servers = 1
-        # Flat per-server directory
+            cfg_seed = 42
+        # Environment variable FL_SEED overrides config file
+        self.seed = int(os.environ.get("FL_SEED", cfg_seed))
+        # Project root and metrics directory
         script_dir = Path(__file__).resolve().parent
-        project_root = script_dir.parent
-        self.base_dir = fs.leaf_server_dir(project_root, server_id)
+        self.project_root = script_dir.parent
+        self.base_dir = fs.leaf_server_dir(self.project_root, server_id)
         (self.base_dir / "models").mkdir(parents=True, exist_ok=True)
+        # Metrics directory for this seed
+        self.metrics_dir = self.project_root / "metrics" / f"seed_{self.seed}"
+        self.metrics_dir.mkdir(parents=True, exist_ok=True)
 
     def weighted_average(self, metrics: List[Tuple[int, Metrics]]) -> Metrics:
         # Weighted average using per-client test_accuracy (baseline)
@@ -92,66 +99,12 @@ class LeafFedAvg(FedAvg):
         return {"accuracy": (sum(vals) / max(1, total_examples))}
 
     def _write_fit_metrics_csv(self, rnd: int, results: List[Tuple[int, Any]]):
-        """Save per-client FIT metrics with baseline key names."""
-        local_rnd = rnd - 1
-        clients_csv = self.base_dir / "client_fit_metrics.csv"
-        write_header = not clients_csv.exists()
-        with open(clients_csv, "a", newline="") as f:
-            writer = csv.DictWriter(
-                f,
-                fieldnames=[
-                    "global_round","local_round","client_id",
-                    "client_train_loss_mean","client_train_accuracy_mean",
-                    "download_bytes","upload_bytes","comp_time_sec",
-                    "num_inner_batches","total_train_samples","num_examples",
-                ],
-            )
-            if write_header:
-                writer.writeheader()
-            for cid, fit_res in results:
-                cid_str = fit_res.metrics.get("client_id", str(cid))
-                n = fit_res.num_examples
-                writer.writerow({
-                    "global_round": self.global_round,
-                    "local_round": local_rnd,
-                    "client_id": cid_str,
-                    "client_train_loss_mean": fit_res.metrics.get("train_loss_mean", None),
-                    "client_train_accuracy_mean": fit_res.metrics.get("train_accuracy_mean", None),
-                    "download_bytes": int(fit_res.metrics.get("download_bytes", 0)),
-                    "upload_bytes": int(fit_res.metrics.get("upload_bytes", 0)),
-                    "comp_time_sec": float(fit_res.metrics.get("comp_time_sec", 0.0)),
-                    "num_inner_batches": int(fit_res.metrics.get("num_inner_batches", 0)),
-                    "total_train_samples": int(fit_res.metrics.get("total_train_samples", n)),
-                    "num_examples": n,
-                })
-        logger.info(f"[{self.server_str} | Round {local_rnd}] Appended client fit metrics → {clients_csv}")
+        # Client metrics collection disabled - only server partition metrics are saved
+        pass
 
     def _write_eval_metrics_csv(self, rnd: int, results: List[Tuple[int, Any]]):
-        """Save per-client evaluation loss & accuracy for this round (baseline keys)."""
-        local_rnd = rnd - 1
-        clients_eval_csv = self.base_dir / "client_eval_metrics.csv"
-        write_header = not clients_eval_csv.exists()
-        with open(clients_eval_csv, "a", newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=["global_round","local_round","client_id","client_test_loss","client_test_accuracy","num_examples"])
-            if write_header:
-                writer.writeheader()
-            for cid, eval_res in results:
-                cid_str = eval_res.metrics.get("client_id", str(cid))
-                # Flower passes loss separately; accuracy is under 'test_accuracy'
-                loss = getattr(eval_res, "loss", None)
-                if loss is None:
-                    loss = eval_res.metrics.get("test_loss")
-                acc = eval_res.metrics.get("test_accuracy", eval_res.metrics.get("accuracy"))
-                n = eval_res.num_examples
-                writer.writerow({
-                    "global_round": self.global_round,
-                    "local_round": local_rnd,
-                    "client_id": cid_str,
-                    "client_test_loss": loss,
-                    "client_test_accuracy": acc,
-                    "num_examples": n,
-                })
-        logger.info(f"[{self.server_str} | Round {local_rnd}] Appended client eval metrics → {clients_eval_csv}")
+        # Client metrics collection disabled - only server partition metrics are saved
+        pass
 
     def aggregate_fit(self, rnd, results, failures):
         if failures:
@@ -195,18 +148,13 @@ class LeafFedAvg(FedAvg):
         return aggregated
 
     def aggregate_evaluate(self, rnd, results, failures):
-        # 1) Save per-client evaluation metrics
-        self._write_eval_metrics_csv(rnd, results)
+        # Client metrics collection disabled
+        # self._write_eval_metrics_csv(rnd, results)
 
-        # 2) Aggregate client evaluation (FedAvg returns (loss, metrics))
+        # Aggregate client evaluation (FedAvg returns (loss, metrics))
         aggregated = super().aggregate_evaluate(rnd, results, failures)
-        if aggregated is not None and isinstance(aggregated, tuple):
-            agg_loss = aggregated[0]
-            agg_acc = aggregated[1].get("accuracy") if aggregated[1] else None
-        else:
-            agg_loss, agg_acc = None, None
 
-        # 3) Server evaluation on union of this server's client test shards (from PARTITIONS_JSON)
+        # Server evaluation on union of this server's client test shards (from PARTITIONS_JSON)
         local_rnd = rnd - 1
         model = Net()
         if hasattr(self, "latest_parameters") and self.latest_parameters is not None:
@@ -229,14 +177,13 @@ class LeafFedAvg(FedAvg):
         server_partition_loss = float(l_loss) if n > 0 else None
         server_partition_acc = float(l_acc) if n > 0 else None
 
-        # 4) Write server-level metrics CSV with better column names
-        server_csv = self.base_dir / "server_metrics.csv"
+        # Write server-level metrics CSV (no client metrics, path in metrics/seed_{SEED}/)
+        server_csv = self.metrics_dir / f"server_{self.server_id}.csv"
         write_header = not server_csv.exists()
         with open(server_csv, "a", newline="") as fsv:
             fieldnames = [
                 "global_round", "local_round",
-                "avg_test_loss_participating_clients", "avg_test_accuracy_participating_clients",
-                "server_test_loss_on_server_partitions", "server_test_accuracy_on_server_partitions",
+                "server_partition_test_loss", "server_partition_test_accuracy",
                 "bytes_down", "bytes_up", "comp_time", "round_time",
             ]
             writer = csv.DictWriter(fsv, fieldnames=fieldnames)
@@ -245,10 +192,8 @@ class LeafFedAvg(FedAvg):
             writer.writerow({
                 "global_round": self.global_round,
                 "local_round": local_rnd,
-                "avg_test_loss_participating_clients": agg_loss,
-                "avg_test_accuracy_participating_clients": agg_acc,
-                "server_test_loss_on_server_partitions": server_partition_loss,
-                "server_test_accuracy_on_server_partitions": server_partition_acc,
+                "server_partition_test_loss": server_partition_loss,
+                "server_partition_test_accuracy": server_partition_acc,
                 "bytes_down": getattr(self, "server_bytes_down", 0),
                 "bytes_up": getattr(self, "server_bytes_up", 0),
                 "comp_time": getattr(self, "server_comp_time", 0.0),

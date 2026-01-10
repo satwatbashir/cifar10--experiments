@@ -20,7 +20,6 @@ from flwr.common import Metrics, NDArrays, Parameters, FitRes, parameters_to_nda
 
 from fedge.utils import fs
 from fedge.task import Net, load_data, test, set_weights, set_global_seed
-from fedge.stats import _mean_std_ci
 import csv
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -38,7 +37,8 @@ SERVER_ROUNDS_PER_GLOBAL = hier["server_rounds_per_global"]
 CLOUD_PORT = hier["cloud_port"]
 CLIENTS_PER_SERVER = hier["clients_per_server"]
 app_cfg = cfg["tool"]["flwr"]["app"]["config"]
-SEED = int(app_cfg.get("seed", 0))
+# Environment variable FL_SEED overrides config file
+SEED = int(os.environ.get("FL_SEED", app_cfg.get("seed", 0)))
 BATCH_SIZE = int(app_cfg.get("batch_size", 64))
 
 # Require new directory structure (no fallback)
@@ -389,209 +389,9 @@ class CloudFedAvg(FedAvg):
                 writer.writeheader()
             writer.writerow({"round": round_num, **rec})
 
-    def _write_distributed_and_fit_csvs(self, round_num: int):
-        """
-        Aggregate metrics from all leaf servers' CSVs.
-        Uses t-distribution CI (more accurate for small samples) instead of 1.96.
-        Reads each file only once to avoid duplicate I/O.
-        """
-        # ──────────────────────────────────────────────────────────────────────
-        # SINGLE PASS: Read all server data once and cache it
-        # ──────────────────────────────────────────────────────────────────────
-        all_acc = []
-        all_loss = []
-        all_weights = []
-
-        # FIT metrics accumulators
-        comp_times = []
-        up_bytes = []
-        down_bytes = []
-        wall_times = []
-        comm_times = []
-        inner_batches = []
-        total_train_samples = []
-        train_losses = []
-        train_accs = []
-
-        # Per-server cached data for servers_metrics.csv
-        per_server_data: Dict[int, Dict[str, Any]] = {}
-
-        for sid in range(NUM_SERVERS):
-            base_dir = fs.leaf_server_dir(project_root, sid)
-
-            # ──────────────────────────────────────────────────────────────────
-            # Read EVAL metrics (once per server)
-            # ──────────────────────────────────────────────────────────────────
-            eval_csv = base_dir / "client_eval_metrics.csv"
-            server_accs = []
-            server_losses = []
-            with open(eval_csv, "r", encoding="utf-8") as f:
-                reader = csv.DictReader(f)
-                eval_rows = [r for r in reader if int(r.get("global_round", -1)) == round_num]
-
-            for r in eval_rows:
-                loss = float(r["client_test_loss"]) if r["client_test_loss"] != "" else 0.0
-                acc = float(r["client_test_accuracy"]) if r["client_test_accuracy"] != "" else 0.0
-                n = int(r.get("num_examples", 0))
-
-                all_acc.append(acc)
-                all_loss.append(loss)
-                all_weights.append(n)
-                server_accs.append(acc)
-                server_losses.append(loss)
-
-            # ──────────────────────────────────────────────────────────────────
-            # Read FIT metrics (once per server)
-            # ──────────────────────────────────────────────────────────────────
-            fit_csv = base_dir / "client_fit_metrics.csv"
-            server_comp = []
-            server_upb = []
-            server_dnb = []
-            with open(fit_csv, "r", encoding="utf-8") as f:
-                reader = csv.DictReader(f)
-                fit_rows = [r for r in reader if int(r.get("global_round", -1)) == round_num]
-
-            for r in fit_rows:
-                comp = float(r.get("comp_time_sec", 0.0))
-                dn = float(r.get("download_bytes", 0))
-                up = float(r.get("upload_bytes", 0))
-                comm = (dn + up) / (self.network_speed_mbps * 1e6 / 8.0) if self.network_speed_mbps > 0 else 0.0
-                wall = comp + comm
-
-                comp_times.append(comp)
-                down_bytes.append(dn)
-                up_bytes.append(up)
-                comm_times.append(comm)
-                wall_times.append(wall)
-                inner_batches.append(float(r.get("num_inner_batches", 0)))
-                total_train_samples.append(float(r.get("total_train_samples", 0)))
-
-                server_comp.append(comp)
-                server_upb.append(up)
-                server_dnb.append(dn)
-
-                # Collect train loss/acc for fit_metrics.csv
-                if r.get("client_train_loss_mean", "") != "":
-                    train_losses.append(float(r["client_train_loss_mean"]))
-                if r.get("client_train_accuracy_mean", "") != "":
-                    train_accs.append(float(r["client_train_accuracy_mean"]))
-
-            # Cache per-server data for servers_metrics.csv
-            server_comms = [(u + d) / (self.network_speed_mbps * 1e6 / 8.0) if self.network_speed_mbps > 0 else 0.0
-                           for u, d in zip(server_upb, server_dnb)]
-            server_walls = [c + cm for c, cm in zip(server_comp, server_comms)]
-            per_server_data[sid] = {
-                "accs": server_accs,
-                "losses": server_losses,
-                "comp": server_comp,
-                "upb": server_upb,
-                "dnb": server_dnb,
-                "comms": server_comms,
-                "walls": server_walls,
-            }
-
-        # ──────────────────────────────────────────────────────────────────────
-        # Compute statistics using t-distribution CI
-        # ──────────────────────────────────────────────────────────────────────
-        n_total = sum(all_weights) if all_weights else 0
-        avg_acc = float(sum(w * a for w, a in zip(all_weights, all_acc)) / max(1, n_total)) if all_weights else 0.0
-        avg_loss = float(sum(w * l for w, l in zip(all_weights, all_loss)) / max(1, n_total)) if all_weights else 0.0
-
-        # Use t-distribution CI (more accurate for small sample sizes)
-        _, acc_sd, acc_ci_lo, acc_ci_hi = _mean_std_ci(all_acc)
-        _, loss_sd, loss_ci_lo, loss_ci_hi = _mean_std_ci(all_loss)
-
-        # Build distributed record (aggregated only, no per-client breakdown)
-        distributed = {
-            "avg_accuracy": avg_acc,
-            "avg_loss": avg_loss,
-            "accuracy_std": acc_sd,
-            "loss_std": loss_sd,
-            "acc_ci95_lo": float(acc_ci_lo),
-            "acc_ci95_hi": float(acc_ci_hi),
-            "loss_ci95_lo": float(loss_ci_lo),
-            "loss_ci95_hi": float(loss_ci_hi),
-            "avg_comp_time_sec": float(np.mean(comp_times)) if comp_times else 0.0,
-            "total_comp_time_sec": float(np.sum(comp_times)) if comp_times else 0.0,
-            "std_comp_time_sec": float(np.std(comp_times)) if comp_times else 0.0,
-            "avg_upload_MB": (float(np.mean(up_bytes)) / 1e6) if up_bytes else 0.0,
-            "total_upload_MB": (float(np.sum(up_bytes)) / 1e6) if up_bytes else 0.0,
-            "avg_download_MB": (float(np.mean(down_bytes)) / 1e6) if down_bytes else 0.0,
-            "total_download_MB": (float(np.sum(down_bytes)) / 1e6) if down_bytes else 0.0,
-            "total_communication_MB": (float(np.sum(up_bytes) + np.sum(down_bytes)) / 1e6) if (up_bytes and down_bytes) else 0.0,
-            "avg_wall_clock_sec": float(np.mean(wall_times)) if wall_times else 0.0,
-            "total_wall_clock_sec": float(np.sum(wall_times)) if wall_times else 0.0,
-            "std_wall_clock_sec": float(np.std(wall_times)) if wall_times else 0.0,
-            "avg_comm_time_sec": float(np.mean(comm_times)) if comm_times else 0.0,
-            "total_comm_time_sec": float(np.sum(comm_times)) if comm_times else 0.0,
-        }
-
-        # Write distributed CSV
-        dist_path = metrics_dir / "distributed_metrics.csv"
-        with open(dist_path, "a", newline="") as f:
-            fieldnames = ["round"] + list(distributed.keys())
-            writer = csv.DictWriter(f, fieldnames=fieldnames)
-            if dist_path.stat().st_size == 0:
-                writer.writeheader()
-            writer.writerow({"round": round_num, **distributed})
-
-        # ──────────────────────────────────────────────────────────────────────
-        # Write fit_metrics.csv (using already-collected data, no re-read)
-        # ──────────────────────────────────────────────────────────────────────
-        fit_row = {
-            "avg_train_loss": float(np.mean(train_losses)) if train_losses else 0.0,
-            "std_train_loss": float(np.std(train_losses)) if train_losses else 0.0,
-            "min_train_loss": float(np.min(train_losses)) if train_losses else 0.0,
-            "max_train_loss": float(np.max(train_losses)) if train_losses else 0.0,
-            "avg_train_accuracy": float(np.mean(train_accs)) if train_accs else 0.0,
-            "std_train_accuracy": float(np.std(train_accs)) if train_accs else 0.0,
-            "min_train_accuracy": float(np.min(train_accs)) if train_accs else 0.0,
-            "max_train_accuracy": float(np.max(train_accs)) if train_accs else 0.0,
-            "avg_comp_time_sec": float(np.mean(comp_times)) if comp_times else 0.0,
-            "std_comp_time_sec": float(np.std(comp_times)) if comp_times else 0.0,
-            "total_comp_time_sec": float(np.sum(comp_times)) if comp_times else 0.0,
-            "avg_upload_MB": float(np.mean(up_bytes)) / 1e6 if up_bytes else 0.0,
-            "total_upload_MB": float(np.sum(up_bytes)) / 1e6 if up_bytes else 0.0,
-            "avg_download_MB": float(np.mean(down_bytes)) / 1e6 if down_bytes else 0.0,
-            "total_download_MB": float(np.sum(down_bytes)) / 1e6 if down_bytes else 0.0,
-            "avg_inner_batches": float(np.mean(inner_batches)) if inner_batches else 0.0,
-            "total_train_samples": float(np.sum(total_train_samples)) if total_train_samples else 0.0,
-        }
-        fit_path = metrics_dir / "fit_metrics.csv"
-        with open(fit_path, "a", newline="") as f:
-            fieldnames = ["round"] + list(fit_row.keys())
-            writer = csv.DictWriter(f, fieldnames=fieldnames)
-            if fit_path.stat().st_size == 0:
-                writer.writeheader()
-            writer.writerow({"round": round_num, **fit_row})
-
-        # ──────────────────────────────────────────────────────────────────────
-        # Write servers_metrics.csv (using cached per-server data, no re-read)
-        # ──────────────────────────────────────────────────────────────────────
-        servers_row: Dict[str, Any] = {}
-        for sid in range(NUM_SERVERS):
-            data = per_server_data[sid]
-            servers_row[f"server{sid}_avg_accuracy"] = float(np.mean(data["accs"])) if data["accs"] else 0.0
-            servers_row[f"server{sid}_avg_loss"] = float(np.mean(data["losses"])) if data["losses"] else 0.0
-            servers_row[f"server{sid}_client_count"] = int(len(data["accs"]))
-            servers_row[f"server{sid}_avg_comp_time_sec"] = float(np.mean(data["comp"])) if data["comp"] else 0.0
-            servers_row[f"server{sid}_avg_upload_MB"] = float(np.mean(data["upb"])) / 1e6 if data["upb"] else 0.0
-            servers_row[f"server{sid}_avg_download_MB"] = float(np.mean(data["dnb"])) / 1e6 if data["dnb"] else 0.0
-            servers_row[f"server{sid}_avg_wall_clock_sec"] = float(np.mean(data["walls"])) if data["walls"] else 0.0
-            servers_row[f"server{sid}_avg_comm_time_sec"] = float(np.mean(data["comms"])) if data["comms"] else 0.0
-
-        if servers_row:
-            srv_path = metrics_dir / "servers_metrics.csv"
-            with open(srv_path, "a", newline="") as f:
-                fieldnames = ["round"] + list(servers_row.keys())
-                writer = csv.DictWriter(f, fieldnames=fieldnames)
-                if srv_path.stat().st_size == 0:
-                    writer.writeheader()
-                writer.writerow({"round": round_num, **servers_row})
-
     def _write_baseline_metrics(self, round_num: int, parameters: Parameters):
+        # Only write centralized metrics - no client aggregation or server averaging
         self._write_centralized_csv(round_num, parameters)
-        self._write_distributed_and_fit_csvs(round_num)
     
     def _write_cloud_comm_csv(self):
         """Write cloud communication metrics to CSV."""
