@@ -230,11 +230,11 @@ def load_data(
         client_indices = train_partitioner._partition_id_to_indices[partition_id]
 
     # 4) Wrap with Subset + DataLoader
-    trainloader = DataLoader(Subset(train_full, client_indices), batch_size=batch_size, shuffle=True, num_workers=0)
+    trainloader = DataLoader(Subset(train_full, client_indices), batch_size=batch_size, shuffle=True, num_workers=0, pin_memory=torch.cuda.is_available())
 
     # 5) Build test loader: prefer explicit indices_test, else derive as before
     if indices_test is not None:
-        testloader = DataLoader(Subset(test_full, indices_test), batch_size=batch_size, shuffle=False, num_workers=0)
+        testloader = DataLoader(Subset(test_full, indices_test), batch_size=batch_size, shuffle=False, num_workers=0, pin_memory=torch.cuda.is_available())
     elif indices is not None:
         test_partitioner = DirichletPartitioner(
             num_partitions=num_partitions,
@@ -248,9 +248,9 @@ def load_data(
         test_partitioner.dataset = hf_test
         test_partitioner._determine_partition_id_to_indices_if_needed()
         test_indices = test_partitioner._partition_id_to_indices[partition_id]
-        testloader = DataLoader(Subset(test_full, test_indices), batch_size=batch_size, shuffle=False, num_workers=0)
+        testloader = DataLoader(Subset(test_full, test_indices), batch_size=batch_size, shuffle=False, num_workers=0, pin_memory=torch.cuda.is_available())
     else:
-        testloader = DataLoader(test_full, batch_size=batch_size, shuffle=False, num_workers=0)
+        testloader = DataLoader(test_full, batch_size=batch_size, shuffle=False, num_workers=0, pin_memory=torch.cuda.is_available())
 
     # 6) CIFAR-10 classes
     n_class = 10
@@ -271,7 +271,7 @@ def train(net: nn.Module, loader: DataLoader, epochs: int, device: torch.device,
     loss = 0.0
     for _ in range(epochs):
         for images, labels in loader:
-            images, labels = images.to(device), labels.to(device)
+            images, labels = images.to(device, non_blocking=True), labels.to(device, non_blocking=True)
             if labels.ndim > 1:
                 labels = labels.squeeze(-1)
             labels = labels.long()
@@ -288,7 +288,7 @@ def test(net: nn.Module, loader: DataLoader, device: torch.device):
     total_samples, correct, loss_sum = 0, 0, 0.0
     with torch.no_grad():
         for images, labels in loader:
-            images, labels = images.to(device), labels.to(device)
+            images, labels = images.to(device, non_blocking=True), labels.to(device, non_blocking=True)
             if labels.ndim > 1:
                 labels = labels.squeeze(-1)
             # Cast to required dtype for CrossEntropyLoss

@@ -33,10 +33,10 @@ clients_per_server = [5, 5, 5]
 global_rounds = 200
 server_rounds_per_global = 1
 # Note: cloud_port and server_base_port removed (not needed for in-memory simulation)
-weight_decay = 0.0001
+weight_decay = 0.0
 clip_norm = 1.0
-momentum = 0.9
-lr_gamma = 0.99
+momentum = 0.0
+lr_gamma = 1.0
 prox_mu = 0.001
 
 # Dataset
@@ -55,13 +55,13 @@ local_epochs = 5
 cluster_better_delta = 0.0
 
 # Evaluation
-eval_batch_size = 32
+eval_batch_size = 64
 
 # Dirichlet Partitioning (matching HierFL for fair comparison)
 [tool.flwr.hierarchy.dirichlet]
 alpha_server = 0.5    # Non-IID across servers (heterogeneous edge regions)
 alpha_client = 1000.0 # IID within each server (high alpha = uniform split)
-seed         = 123
+seed         = 42
 
 
 # Cloud Clustering Configuration

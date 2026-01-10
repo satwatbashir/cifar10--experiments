@@ -69,7 +69,7 @@ LR_INIT = float(HIER_CFG["lr_init"])
 SERVER_LR = float(HIER_CFG.get("server_lr", 1.0))
 GLOBAL_LR = float(HIER_CFG.get("global_lr", 1.0))
 LOCAL_EPOCHS = int(HIER_CFG["local_epochs"])
-BATCH_SIZE = 32  # Default batch size for training
+BATCH_SIZE = 64  # Matches FedProx/HierFL for fair comparison
 EVAL_BATCH_SIZE = int(HIER_CFG.get("eval_batch_size", 32))
 
 # Optimization parameters
@@ -100,6 +100,7 @@ np.random.seed(SEED)
 torch.manual_seed(SEED)
 if torch.cuda.is_available():
     torch.cuda.manual_seed_all(SEED)
+    torch.backends.cudnn.benchmark = True  # Enable cuDNN auto-tuner for faster convolutions
 
 logger.info(f"[CONFIG] SEED={SEED}, NUM_SERVERS={NUM_SERVERS}, CLIENTS_PER_SERVER={CLIENTS_PER_SERVER}")
 logger.info(f"[CONFIG] GLOBAL_ROUNDS={GLOBAL_ROUNDS}, LOCAL_EPOCHS={LOCAL_EPOCHS}, BATCH_SIZE={BATCH_SIZE}")
@@ -395,7 +396,7 @@ class SimulatedLeafServer:
         with torch.no_grad():
             for client in self.clients:
                 for batch in client.testloader:
-                    images, labels = batch[0].to(self.device), batch[1].to(self.device)
+                    images, labels = batch[0].to(self.device, non_blocking=True), batch[1].to(self.device, non_blocking=True)
                     outputs = server_net(images)
                     loss = torch.nn.functional.cross_entropy(outputs, labels, reduction='sum')
                     total_test_loss += loss.item()
@@ -563,17 +564,18 @@ class SimulationOrchestrator:
         # Create partitions for train data
         self.partitions = create_partitions(self.cifar_data.train_labels)
 
-        # Initialize global model
-        self.global_model = Net()
-        self.global_weights = get_weights(self.global_model)
+        # Initialize model weights (used only for first round initialization)
+        # NOTE: No global model maintained - only cluster-specific models
+        init_model = Net()
+        self.initial_weights = get_weights(init_model)
 
         # Metrics collection - CLEAN CONSOLIDATED STRUCTURE
         # Create directories BEFORE initializing components (cloud needs clusters_dir)
         self.run_dir = PROJECT_ROOT / "runs" / f"seed{SEED}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         self.run_dir.mkdir(parents=True, exist_ok=True)
 
-        # All metrics in one place
-        self.global_csv = self.run_dir / "global_rounds.csv"
+        # All metrics in one place (server-level aggregated, no global model)
+        self.global_csv = self.run_dir / "server_rounds.csv"
 
         # Server metrics in subfolder
         self.servers_dir = self.run_dir / "servers"
@@ -651,9 +653,11 @@ class SimulationOrchestrator:
 
         for server in self.leaf_servers:
             if self.cloud.cluster_parameters:
+                # Use cluster-specific model for this server
                 initial_params = self.cloud.get_cluster_model(server.server_id)
             else:
-                initial_params = self.global_weights
+                # First round only: use initial random weights
+                initial_params = self.initial_weights
 
             config = {
                 "lr": LR_INIT * (LR_GAMMA ** (global_round - 1)),
@@ -669,18 +673,12 @@ class SimulationOrchestrator:
             total_samples = sum(c.num_train for c in server.clients)
             server_models.append((server.server_id, aggregated_weights, total_samples))
 
-        # Cloud aggregation + clustering
+        # Cloud aggregation + clustering (no global model - only cluster models)
         self.cloud.aggregate_and_cluster(server_models, global_round)
 
-        # Update global weights
-        total_samples = sum(n for _, _, n in server_models)
-        new_global = []
-        for layer_idx in range(len(self.global_weights)):
-            weighted_sum = np.zeros_like(self.global_weights[layer_idx], dtype=np.float32)
-            for _, weights, num_samples in server_models:
-                weighted_sum += weights[layer_idx].astype(np.float32) * num_samples
-            new_global.append(weighted_sum / total_samples)
-        self.global_weights = new_global
+        # NOTE: Global weights update REMOVED per design:
+        # Fedge uses cluster-specific models, not a single global model.
+        # Each server receives its cluster's aggregated model.
 
         # Compute round metrics with t-critical based 95% CI
         round_time = time.time() - round_start

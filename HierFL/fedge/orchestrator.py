@@ -16,6 +16,8 @@ import datetime
 import numpy as np
 import atexit
 import signal
+import gc
+import torch
 logging.basicConfig(level=logging.WARNING, format="[%(asctime)s] %(levelname)s - %(message)s")
 logger = logging.getLogger("Orchestrator")
 
@@ -583,6 +585,12 @@ def main():
                 cloud_proc = None
                 # Brief pause to allow port to free before next cloud start
                 time.sleep(1)
+
+            # Periodic garbage collection (every 10 rounds) - matches Fedge-Simulation
+            if (global_round + 1) % 10 == 0:
+                gc.collect()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
 
         # Create cloud_complete.signal to indicate training is fully complete
         cloud_complete = signals_dir / "cloud_complete.signal"

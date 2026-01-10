@@ -10,6 +10,7 @@ import csv
 import math
 import numpy as np
 import torch
+import gc
 from scipy.stats import t as t_dist
 
 
@@ -344,16 +345,22 @@ def server_fn(context: Context):
 
         fit_round_counter["value"] += 1
 
+        # Periodic garbage collection (every 10 rounds) - matches Fedge-Simulation
+        if round_num % 10 == 0:
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
         return result
 
     strategy = FedProx(
         proximal_mu=proximal_mu,
         fraction_fit=fraction_fit,
-        fraction_evaluate=fraction_evaluate,
+        fraction_evaluate=0.0,  # Disabled: No client-level evaluation (saves time)
         min_available_clients=min_available_clients,
         initial_parameters=parameters,
         fit_metrics_aggregation_fn=aggregate_fit_metrics_seeded,
-        evaluate_metrics_aggregation_fn=aggregate_and_log_seeded,
+        # evaluate_metrics_aggregation_fn removed: client eval disabled
         evaluate_fn=eval_fn,
     )
     config = ServerConfig(num_rounds=num_rounds)

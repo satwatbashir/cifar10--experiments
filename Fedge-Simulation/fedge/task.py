@@ -63,53 +63,30 @@ def _train_transform():
         Normalize(_CIFAR10_MEAN, _CIFAR10_STD),
     ])
 
-# SCAFFOLD's exact 6-layer CNN for CIFAR-10
+# LeNet-style CNN for CIFAR-10 (NIID-Bench standard) - matches FedProx/HierFL
 class Net(nn.Module):
-    """
-    Compact CIFAR-10 CNN: 3 conv blocks (32→64→128), BN+ReLU, maxpool,
-    global-avg-pool, classifier. ~0.9M params; solid baseline for CIFAR-10.
-    """
+    """LeNet-style CNN for CIFAR-10 (NIID-Bench standard). ~62K params."""
     def __init__(self, in_ch: int = 3, img_h: int = 32, img_w: int = 32, n_class: int = 10):
         super().__init__()
-        self.block1 = nn.Sequential(
-            nn.Conv2d(in_ch, 32, kernel_size=3, padding=1, bias=False),
-            nn.BatchNorm2d(32),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(32, 32, kernel_size=3, padding=1, bias=False),
-            nn.BatchNorm2d(32),
-            nn.ReLU(inplace=True),
-            nn.MaxPool2d(2),           # 32x32 -> 16x16
-            nn.Dropout(0.1),
-        )
-        self.block2 = nn.Sequential(
-            nn.Conv2d(32, 64, kernel_size=3, padding=1, bias=False),
-            nn.BatchNorm2d(64),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(64, 64, kernel_size=3, padding=1, bias=False),
-            nn.BatchNorm2d(64),
-            nn.ReLU(inplace=True),
-            nn.MaxPool2d(2),           # 16x16 -> 8x8
-            nn.Dropout(0.1),
-        )
-        self.block3 = nn.Sequential(
-            nn.Conv2d(64, 128, kernel_size=3, padding=1, bias=False),
-            nn.BatchNorm2d(128),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(128, 128, kernel_size=3, padding=1, bias=False),
-            nn.BatchNorm2d(128),
-            nn.ReLU(inplace=True),
-            nn.MaxPool2d(2),           # 8x8 -> 4x4
-            nn.Dropout(0.1),
-        )
-        self.gap = nn.AdaptiveAvgPool2d(1)  # -> (B, 128, 1, 1)
-        self.head = nn.Linear(128, n_class)
+        self.conv1 = nn.Conv2d(in_ch, 6, kernel_size=5)     # 3x32x32 -> 6x28x28
+        self.pool  = nn.MaxPool2d(2, 2)                     # -> 6x14x14
+        self.conv2 = nn.Conv2d(6, 16, kernel_size=5)        # -> 16x10x10 -> pool -> 16x5x5
+        # compute flatten dim dynamically
+        with torch.no_grad():
+            x = self.pool(F.relu(self.conv1(torch.zeros(1, in_ch, img_h, img_w))))
+            x = self.pool(F.relu(self.conv2(x)))
+            flat = x.view(1, -1).size(1)
+        self.fc1 = nn.Linear(flat, 120)
+        self.fc2 = nn.Linear(120, 84)
+        self.fc3 = nn.Linear(84, n_class)
 
     def forward(self, x):
-        x = self.block1(x)
-        x = self.block2(x)
-        x = self.block3(x)
-        x = self.gap(x).flatten(1)
-        return self.head(x)
+        x = self.pool(F.relu(self.conv1(x)))
+        x = self.pool(F.relu(self.conv2(x)))
+        x = x.view(x.size(0), -1)
+        x = F.relu(self.fc1(x))
+        x = F.relu(self.fc2(x))
+        return self.fc3(x)
 
 
 # ──────────────────────── Torchvision CIFAR-10 loader ──────────────────────
@@ -504,7 +481,7 @@ def train(
     
     for epoch in range(epochs):
         for batch_idx, (imgs, labels) in enumerate(loader):
-            imgs, labels = imgs.to(device), labels.flatten().long().to(device)
+            imgs, labels = imgs.to(device, non_blocking=True), labels.flatten().long().to(device, non_blocking=True)
             opt.zero_grad()
             
             # Forward pass with mixed precision for stability
@@ -572,8 +549,8 @@ def test(net: nn.Module, loader: DataLoader, device: torch.device) -> Tuple[floa
     max_logit = float('-inf')
     
     for batch_idx, (imgs, labels) in enumerate(loader):
-        imgs, labels = imgs.to(device), labels.flatten().long().to(device)
-        
+        imgs, labels = imgs.to(device, non_blocking=True), labels.flatten().long().to(device, non_blocking=True)
+
         # Forward pass
         outputs = net(imgs)
         
