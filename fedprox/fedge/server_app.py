@@ -7,8 +7,19 @@ from fedge.task import Net, get_weights, load_data, set_weights, test, set_globa
 from typing import List, Tuple
 import os
 import csv
+import math
 import numpy as np
 import torch
+from scipy.stats import t as t_dist
+
+
+def _ci_bounds(mean: float, std: float, n: int) -> tuple[float, float]:
+    """95% confidence interval bounds using t-distribution (two-sided)."""
+    if n <= 1:
+        return (mean, mean)
+    tcrit = t_dist.ppf(0.975, df=n-1)  # 97.5% quantile for two-sided 95% CI
+    margin = tcrit * (std / math.sqrt(n))
+    return (mean - margin, mean + margin)
 
 
 # Ensure metrics directory exists
@@ -216,28 +227,24 @@ def server_fn(context: Context):
         avg_acc  = float(sum(n * m["test_accuracy"] for n, m in metrics_list) / max(1, n_total))
         avg_loss = float(sum(n * m["test_loss"]      for n, m in metrics_list) / max(1, n_total))
 
-        acc_sd  = float(np.std(accs))  if accs   else 0.0
-        loss_sd = float(np.std(losses)) if losses else 0.0
-        n = max(1, len(accs))
-        acc_se  = acc_sd  / (n ** 0.5)
-        loss_se = loss_sd / (n ** 0.5)
+        acc_sd  = float(np.std(accs, ddof=1))  if len(accs) > 1 else 0.0
+        loss_sd = float(np.std(losses, ddof=1)) if len(losses) > 1 else 0.0
+        n = len(accs)
+
+        # Use t-distribution CI (accurate for small samples)
+        acc_ci_lo, acc_ci_hi = _ci_bounds(avg_acc, acc_sd, n)
+        loss_ci_lo, loss_ci_hi = _ci_bounds(avg_loss, loss_sd, n)
 
         result = {
             "avg_accuracy":   avg_acc,
             "avg_loss":       avg_loss,
             "accuracy_std":   acc_sd,
             "loss_std":       loss_sd,
-            "acc_ci95_lo":    float(avg_acc  - 1.96 * acc_se),
-            "acc_ci95_hi":    float(avg_acc  + 1.96 * acc_se),
-            "loss_ci95_lo":   float(avg_loss - 1.96 * loss_se),
-            "loss_ci95_hi":   float(avg_loss + 1.96 * loss_se),
+            "acc_ci95_lo":    float(acc_ci_lo),
+            "acc_ci95_hi":    float(acc_ci_hi),
+            "loss_ci95_lo":   float(loss_ci_lo),
+            "loss_ci95_hi":   float(loss_ci_hi),
         }
-
-        # Keep per-client values so you can plot them
-        for idx, v in enumerate(accs):
-            result[f"client_{idx + 1}_accuracy"] = float(v)
-        for idx, v in enumerate(losses):
-            result[f"client_{idx + 1}_loss"] = float(v)
 
         # 2a) Computation & communication cost (always include keys)
         comp_times = [m.get("comp_time_sec", 0.0) for _, m in metrics_list]

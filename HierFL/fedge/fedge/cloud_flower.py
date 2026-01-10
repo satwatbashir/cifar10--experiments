@@ -11,7 +11,6 @@ import warnings
 import logging
 import torch
 import numpy as np
-import re
 from pathlib import Path
 from typing import List, Tuple, Optional, Dict, Any
 
@@ -402,8 +401,6 @@ class CloudFedAvg(FedAvg):
         all_acc = []
         all_loss = []
         all_weights = []
-        per_client_acc_map: Dict[int, float] = {}
-        per_client_loss_map: Dict[int, float] = {}
 
         # FIT metrics accumulators
         comp_times = []
@@ -421,14 +418,6 @@ class CloudFedAvg(FedAvg):
 
         for sid in range(NUM_SERVERS):
             base_dir = fs.leaf_server_dir(project_root, sid)
-
-            # Compute global index offset for this server
-            if isinstance(CLIENTS_PER_SERVER, list):
-                cps = CLIENTS_PER_SERVER[sid]
-                offset = sum(CLIENTS_PER_SERVER[:sid])
-            else:
-                cps = CLIENTS_PER_SERVER
-                offset = sid * cps
 
             # ──────────────────────────────────────────────────────────────────
             # Read EVAL metrics (once per server)
@@ -450,18 +439,6 @@ class CloudFedAvg(FedAvg):
                 all_weights.append(n)
                 server_accs.append(acc)
                 server_losses.append(loss)
-
-                # Parse local client id
-                try:
-                    id_str = str(r.get("client_id", ""))
-                    m = re.search(r"client_(\d+)", id_str)
-                    cid_local = int(m.group(1)) if m else None
-                except Exception:
-                    cid_local = None
-                if cid_local is not None:
-                    gidx = offset + cid_local
-                    per_client_acc_map[gidx] = acc
-                    per_client_loss_map[gidx] = loss
 
             # ──────────────────────────────────────────────────────────────────
             # Read FIT metrics (once per server)
@@ -524,8 +501,7 @@ class CloudFedAvg(FedAvg):
         _, acc_sd, acc_ci_lo, acc_ci_hi = _mean_std_ci(all_acc)
         _, loss_sd, loss_ci_lo, loss_ci_hi = _mean_std_ci(all_loss)
 
-        total_clients = sum(CLIENTS_PER_SERVER) if isinstance(CLIENTS_PER_SERVER, list) else (NUM_SERVERS * CLIENTS_PER_SERVER)
-
+        # Build distributed record (aggregated only, no per-client breakdown)
         distributed = {
             "avg_accuracy": avg_acc,
             "avg_loss": avg_loss,
@@ -535,16 +511,6 @@ class CloudFedAvg(FedAvg):
             "acc_ci95_hi": float(acc_ci_hi),
             "loss_ci95_lo": float(loss_ci_lo),
             "loss_ci95_hi": float(loss_ci_hi),
-        }
-
-        # Per-client columns
-        for idx in range(total_clients):
-            distributed[f"client_{idx}_accuracy"] = float(per_client_acc_map.get(idx, 0.0))
-        for idx in range(total_clients):
-            distributed[f"client_{idx}_loss"] = float(per_client_loss_map.get(idx, 0.0))
-
-        # Efficiency bundle
-        distributed.update({
             "avg_comp_time_sec": float(np.mean(comp_times)) if comp_times else 0.0,
             "total_comp_time_sec": float(np.sum(comp_times)) if comp_times else 0.0,
             "std_comp_time_sec": float(np.std(comp_times)) if comp_times else 0.0,
@@ -558,7 +524,7 @@ class CloudFedAvg(FedAvg):
             "std_wall_clock_sec": float(np.std(wall_times)) if wall_times else 0.0,
             "avg_comm_time_sec": float(np.mean(comm_times)) if comm_times else 0.0,
             "total_comm_time_sec": float(np.sum(comm_times)) if comm_times else 0.0,
-        })
+        }
 
         # Write distributed CSV
         dist_path = metrics_dir / "distributed_metrics.csv"
