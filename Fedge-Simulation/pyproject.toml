@@ -43,7 +43,7 @@ prox_mu = 0.01
 dataset_flag = "cifar10"
 
 # SCAFFOLD + FedProx parameters
-scaffold_enabled = false
+scaffold_enabled = true
 
 # Learning parameters
 lr_init = 0.01
@@ -70,7 +70,7 @@ enable = true
 start_round = 30                 # clustering begins after models differentiate
 frequency = 1                    # cluster every cloud round
 method = "cosine_similarity"     # Pure cosine similarity clustering (no agglomerative)
-tau = 0.7                        # Similarity threshold: merge if abs(cosine_sim) >= tau
+tau = 0.4                        # Similarity threshold: merge if abs(cosine_sim) >= tau
 
 # System Configuration
 [tool.flwr.cluster.batch_sizes]

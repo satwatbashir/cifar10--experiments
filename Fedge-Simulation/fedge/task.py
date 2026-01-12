@@ -459,7 +459,7 @@ def train(
         else _make_scheduler(opt, os.getenv("SCHEDULER_TYPE", "step"), lr)  # Keep scheduler default
     )
 
-    ce = nn.CrossEntropyLoss(label_smoothing=0.1)  # Label smoothing for stability
+    ce = nn.CrossEntropyLoss()  # No label smoothing (match baselines)
     
     # Convert reference weights to tensors with proper validation
     ref_tensors = None
