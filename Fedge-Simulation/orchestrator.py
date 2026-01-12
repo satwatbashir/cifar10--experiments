@@ -264,8 +264,7 @@ class SimulatedClient:
                 local_model=net,
                 global_model=global_net,
                 learning_rate=lr,
-                local_epochs=epochs,
-                clip_value=1.0
+                local_epochs=epochs
             )
             scaffold_delta = self.scaffold_manager.get_client_control()
 
