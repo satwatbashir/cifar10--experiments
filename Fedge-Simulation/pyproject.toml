@@ -30,14 +30,14 @@ packages = ["."]
 [tool.flwr.hierarchy]
 num_servers = 3
 clients_per_server = [5, 5, 5]
-global_rounds = 200
+global_rounds = 100
 server_rounds_per_global = 1
 # Note: cloud_port and server_base_port removed (not needed for in-memory simulation)
 weight_decay = 0.0
 clip_norm = 1.0
-momentum = 0.0
+momentum = 0.9
 lr_gamma = 1.0
-prox_mu = 0.001
+prox_mu = 0.01
 
 # Dataset
 dataset_flag = "cifar10"
@@ -67,7 +67,7 @@ seed         = 42
 # Cloud Clustering Configuration
 [tool.flwr.cloud_cluster]
 enable = true
-start_round = 1                  # clustering begins from round 3 (after stabilization)
+start_round = 30                 # clustering begins after models differentiate
 frequency = 1                    # cluster every cloud round
 method = "cosine_similarity"     # Pure cosine similarity clustering (no agglomerative)
 tau = 0.7                        # Similarity threshold: merge if abs(cosine_sim) >= tau

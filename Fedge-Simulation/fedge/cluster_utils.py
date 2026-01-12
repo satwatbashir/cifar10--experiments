@@ -153,35 +153,35 @@ def connected_components_from_adj(A: np.ndarray) -> np.ndarray:
 
 def flatten_last_layer(weights: List[np.ndarray]) -> np.ndarray:
     """Extract and flatten the last layer weights (Linear layer: weight only, no bias).
-    
+
     This function is more flexible and can handle different model architectures by
     finding the last 2D weight matrix in the model, which is typically the classifier head.
-    
+
     Args:
         weights: List of weight arrays from a model
-        
+
     Returns:
         Flattened last layer weights as 1D array
     """
     # Find the last 2D weight matrix (classifier head)
     fc_w_idx = None
-    
+
     # First try to find by known CIFAR-10 shape (10, X) for faster matching
     for idx, arr in enumerate(weights):
         if arr.ndim == 2 and arr.shape[0] == 10:  # CIFAR-10 head.weight
             fc_w_idx = idx
             break
-    
+
     # If not found, use a more general approach: find the last 2D array
     if fc_w_idx is None:
         for idx in range(len(weights)-1, -1, -1):  # Search from the end
             if weights[idx].ndim == 2:
                 fc_w_idx = idx
                 break
-    
+
     if fc_w_idx is None:
         raise ValueError("Failed to locate any 2D weight matrix in the model")
-    
+
     # Return only the weight, no bias
     return weights[fc_w_idx].ravel()
 
@@ -190,7 +190,7 @@ def flatten_last_layer(weights: List[np.ndarray]) -> np.ndarray:
 
 
 def cifar10_weight_clustering(
-    server_weights_list: List[List[np.ndarray]], 
+    server_weights_list: List[List[np.ndarray]],
     global_weights: List[np.ndarray],
     reference_imgs: torch.Tensor,
     round_num: int,
@@ -199,10 +199,10 @@ def cifar10_weight_clustering(
 ) -> Tuple[np.ndarray, np.ndarray, float]:
     """
     CIFAR-10 dynamic weight-based clustering using absolute cosine similarity.
-    
+
     Simple rule: merge servers if abs(cosine_similarity(last_layer_i, last_layer_j)) >= tau
     This handles sign ambiguity in the last layer weights.
-    
+
     Args:
         server_weights_list: List of weight lists from each server
         global_weights: Global model weights (unused in this implementation)
@@ -210,16 +210,16 @@ def cifar10_weight_clustering(
         round_num: Current round number for logging
         tau: Similarity threshold (0.0 to 1.0)
         stability_history: Unused in simplified implementation
-        
+
     Returns:
         Tuple of (labels, similarity_matrix, tau)
     """
     print(f"[Round {round_num}] Using absolute cosine similarity clustering (tau={tau:.3f})")
     n_servers = len(server_weights_list)
-    
+
     if n_servers == 1:
         return np.array([0]), np.array([[1.0]]), tau
-    
+
     # 1. Extract and normalize last-layer vectors
     V = np.stack([flatten_last_layer(w) for w in server_weights_list], axis=0)
     
