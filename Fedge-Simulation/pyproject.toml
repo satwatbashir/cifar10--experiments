@@ -30,13 +30,13 @@ packages = ["."]
 [tool.flwr.hierarchy]
 num_servers = 3
 clients_per_server = [5, 5, 5]
-global_rounds = 100
+global_rounds = 200
 server_rounds_per_global = 1
 # Note: cloud_port and server_base_port removed (not needed for in-memory simulation)
 weight_decay = 0.0
 clip_norm = 1.0
 momentum = 0.9
-lr_gamma = 1.0
+lr_gamma = 0.995                 # LR decay: ~0.37 of initial LR by round 200
 prox_mu = 0.01
 
 # Dataset
@@ -69,8 +69,8 @@ seed         = 42
 enable = true
 start_round = 30                 # clustering begins after models differentiate
 frequency = 1                    # cluster every cloud round
-method = "cosine_similarity"     # Pure cosine similarity clustering (no agglomerative)
-tau = 0.4                        # Similarity threshold: merge if abs(cosine_sim) >= tau
+method = "gradient"              # "gradient" (recommended) or "weight" for fallback
+tau = 0.5                        # Similarity threshold: merge if similarity >= tau
 
 # System Configuration
 [tool.flwr.cluster.batch_sizes]

@@ -4,10 +4,89 @@
 
 | Method | Accuracy | Rounds | Rank |
 |--------|----------|--------|------|
-| **Fedge v2** | **59.16%** | 100 | **1st** |
-| FedProx | 56.29% | 200 | 2nd |
-| HierFL | 50.58% | 200 | 3rd |
-| Fedge v1 | 45.07% | 200 | 4th |
+| **Fedge v3** | **60.23%** | 100 | **1st** |
+| Fedge v2 | 59.16% | 100 | 2nd |
+| FedProx | 56.29% | 200 | 3rd |
+| HierFL | 50.58% | 200 | 4th |
+| Fedge v1 | 45.07% | 200 | 5th |
+
+---
+
+## v3 Final Results (seed 42, 100 rounds)
+
+| Metric | Value |
+|--------|-------|
+| Final accuracy | **60.23%** |
+| Peak accuracy | **60.93%** (round 98) |
+| Plateau start | ~round 70-80 |
+| num_clusters | 1 (always) |
+
+### v3 vs Baselines
+
+| Baseline | v3 Improvement |
+|----------|----------------|
+| FedProx (56.29%) | **+3.94%** |
+| HierFL (50.58%) | **+9.65%** |
+| Fedge v2 (59.16%) | **+1.07%** |
+| Fedge v1 (45.07%) | **+15.16%** |
+
+### v3 Accuracy Progression
+
+| Rounds | Accuracy | Gain per 10 rounds |
+|--------|----------|-------------------|
+| 1→10 | 25% → 43% | +18% |
+| 10→20 | 43% → 49% | +6% |
+| 20→30 | 49% → 51.4% | +2.4% |
+| 30→40 | 51.4% → 54.9% | +3.5% |
+| 40→50 | 54.9% → 55.8% | +0.9% |
+| 50→60 | 55.8% → 57.1% | +1.3% |
+| 60→70 | 57.1% → 59.4% | +2.3% |
+| 70→80 | 59.4% → 58.8% | -0.6% ← dip |
+| 80→90 | 58.8% → 59.0% | +0.2% |
+| 90→100 | 59.0% → 60.2% | +1.2% |
+
+### v3 Clustering Analysis
+
+Server similarities at round 100: **0.9985** (all pairs)
+
+**Problem:** Even tau=0.4 can't split servers when similarity > 0.99
+
+---
+
+## Current: v3 200-Round Experiment
+
+Running v3 for 200 rounds to find plateau maximum.
+
+### Expected Results
+
+| Rounds | Expected Accuracy |
+|--------|------------------|
+| 100 | 60.23% (actual) |
+| 150 | ~62% |
+| 200 | ~63% (plateau) |
+
+---
+
+## v4 Plan: LR Decay (After v3 200-Round)
+
+### Why LR Decay?
+
+- Fixed LR (0.01) causes oscillation around optimum
+- Decay allows finer convergence in later rounds
+
+### v4 Configuration Changes
+
+| Parameter | v3 | v4 |
+|-----------|-----|-----|
+| global_rounds | 200 | 200 |
+| lr_gamma | 1.0 | **0.99** |
+
+### v4 Expected Results
+
+| Method | 200 rounds |
+|--------|------------|
+| Fedge v3 | ~63% |
+| **Fedge v4** | **~65%** |
 
 ---
 
@@ -217,6 +296,8 @@ SCAFFOLD needs careful tuning:
 
 ## Git History
 
-- v3: (in progress) - tau=0.4, no label smoothing, SCAFFOLD disabled
-- v2: commit `b524d42`
-- v1: commit `32a5d29` and earlier
+- v3: 60.23% (100 rounds) - tau=0.4, no label smoothing, SCAFFOLD disabled
+- v3 200-round: (in progress) - same config, extended rounds
+- v4: (planned) - add lr_gamma=0.99
+- v2: commit `b524d42` - 59.16%
+- v1: commit `32a5d29` and earlier - 45.07%

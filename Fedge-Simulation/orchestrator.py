@@ -39,6 +39,7 @@ from fedge.task import (
     Net, load_cifar10_data, train, test, get_weights, set_weights, Cifar10Data
 )
 from fedge.cluster_utils import cifar10_weight_clustering as weight_clustering
+from fedge.cluster_utils import gradient_based_clustering
 from fedge.partitioning import hier_dirichlet_indices, write_partitions
 from fedge.stats import _mean_std_ci
 
@@ -86,6 +87,7 @@ CLUSTER_ENABLED = bool(CLUSTER_CFG["enable"])
 CLUSTER_START_ROUND = int(CLUSTER_CFG["start_round"])
 CLUSTER_FREQUENCY = int(CLUSTER_CFG["frequency"])
 CLUSTER_TAU = float(CLUSTER_CFG["tau"])
+CLUSTER_METHOD = str(CLUSTER_CFG.get("method", "weight"))  # "weight" or "gradient"
 
 # Accuracy gate
 CLUSTER_BETTER_DELTA = float(HIER_CFG.get("cluster_better_delta", 0.0))
@@ -434,6 +436,9 @@ class CloudAggregator:
         self.cluster_map: Dict[int, int] = {}
         self.cluster_parameters: Dict[int, List[np.ndarray]] = {}
 
+        # Track previous server weights for gradient-based clustering
+        self.previous_server_weights: Dict[int, List[np.ndarray]] = {}
+
         # Metrics
         self.round_metrics = []
         self.cluster_history = []
@@ -466,15 +471,30 @@ class CloudAggregator:
         )
 
         if should_cluster:
-            logger.info(f"[Cloud] Running clustering at round {global_round}")
+            logger.info(f"[Cloud] Running clustering at round {global_round} (method={CLUSTER_METHOD})")
 
-            labels, similarity_matrix, tau = weight_clustering(
-                server_weights_list=weights_list,
-                global_weights=global_weights,
-                reference_imgs=None,
-                round_num=global_round,
-                tau=CLUSTER_TAU
-            )
+            if CLUSTER_METHOD == "gradient":
+                # Gradient-based clustering: use direction of model updates
+                # previous_server_weights is guaranteed to have data by round 30
+                # (populated every round since round 1)
+                previous_weights_list = [
+                    self.previous_server_weights[sid] for sid in server_ids
+                ]
+                labels, similarity_matrix, tau = gradient_based_clustering(
+                    server_weights_list=weights_list,
+                    previous_weights_list=previous_weights_list,
+                    tau=CLUSTER_TAU,
+                    round_num=global_round
+                )
+            else:
+                # Weight-based clustering
+                labels, similarity_matrix, tau = weight_clustering(
+                    server_weights_list=weights_list,
+                    global_weights=global_weights,
+                    reference_imgs=None,
+                    round_num=global_round,
+                    tau=CLUSTER_TAU
+                )
 
             self.cluster_map = {sid: int(labels[i]) for i, sid in enumerate(server_ids)}
 
@@ -498,8 +518,16 @@ class CloudAggregator:
             self._save_cluster_artifacts(global_round, labels, similarity_matrix, server_ids)
             logger.info(f"[Cloud] Clustering result: {len(unique_clusters)} clusters, map={self.cluster_map}")
         else:
-            self.cluster_map = {sid: 0 for sid in server_ids}
-            self.cluster_parameters = {0: global_weights}
+            # FIX: Each server keeps its own model (no global averaging before clustering)
+            # This allows servers to naturally diverge based on their non-IID data
+            self.cluster_map = {sid: sid for sid in server_ids}
+            self.cluster_parameters = {
+                sid: weights_list[i] for i, sid in enumerate(server_ids)
+            }
+
+        # Store current weights for next round's gradient computation
+        for i, sid in enumerate(server_ids):
+            self.previous_server_weights[sid] = weights_list[i]
 
         metrics = {
             "global_round": global_round,

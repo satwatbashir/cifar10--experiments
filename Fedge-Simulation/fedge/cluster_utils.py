@@ -268,20 +268,90 @@ def cifar10_weight_clustering(
 
 
 
-def compute_gradient_similarity(weights1: List[np.ndarray], weights2: List[np.ndarray], 
+def gradient_based_clustering(
+    server_weights_list: List[List[np.ndarray]],
+    previous_weights_list: List[List[np.ndarray]],
+    tau: float,
+    round_num: int
+) -> Tuple[np.ndarray, np.ndarray, float]:
+    """
+    Cluster servers based on gradient direction similarity.
+
+    Gradients capture how models want to update based on their local data,
+    which is more discriminative than weight positions for non-IID settings.
+
+    Args:
+        server_weights_list: Current weights from each server
+        previous_weights_list: Weights from previous round (before local training)
+        tau: Similarity threshold for clustering
+        round_num: Current round number for logging
+
+    Returns:
+        Tuple of (labels, similarity_matrix, tau)
+    """
+    print(f"[Round {round_num}] Using gradient-based clustering (tau={tau:.3f})")
+    n_servers = len(server_weights_list)
+
+    if n_servers == 1:
+        return np.array([0]), np.array([[1.0]]), tau
+
+    # Compute gradient vectors (current - previous = direction of update)
+    gradients = []
+    for i in range(n_servers):
+        grad = [w - pw for w, pw in zip(server_weights_list[i], previous_weights_list[i])]
+        grad_flat = np.concatenate([g.flatten() for g in grad])
+        # Normalize to unit vector
+        norm = np.linalg.norm(grad_flat)
+        if norm < 1e-8:
+            # This should never happen in practice (training always changes weights)
+            print(f"[WARNING] Server {i} has zero gradient - this indicates no training occurred!")
+        gradients.append(grad_flat / (norm + 1e-12))  # Safe division
+
+    G = np.stack(gradients)
+
+    # Absolute cosine similarity (handles sign ambiguity)
+    S = np.abs(G @ G.T)
+
+    # Sanitize any numerical issues
+    S = np.nan_to_num(S, nan=0.0, posinf=1.0, neginf=0.0)
+    S = np.clip(S, 0.0, 1.0)
+
+    # Logging
+    print(f"[Clustering] Gradient similarity matrix:")
+    print(np.round(S, 3))
+
+    # Threshold and connected components
+    np.fill_diagonal(S, 0.0)
+    A = (S >= tau)
+    labels = connected_components_from_adj(A)
+
+    print(f"[Clustering] Adjacency matrix (tau={tau:.3f}):")
+    print(A.astype(int))
+
+    unique_labels = np.unique(labels)
+    cluster_sizes = [np.sum(labels == label) for label in unique_labels]
+    print(f"[Round {round_num}] Result: {len(unique_labels)} clusters with sizes {cluster_sizes}")
+
+    # Restore diagonal for return
+    np.fill_diagonal(S, 1.0)
+
+    return labels, S, tau
+
+
+def compute_gradient_similarity(weights1: List[np.ndarray], weights2: List[np.ndarray],
                                global_weights: List[np.ndarray]) -> float:
     """Compute cosine similarity between gradient directions."""
     grad1 = [w1 - gw for w1, gw in zip(weights1, global_weights)]
     grad2 = [w2 - gw for w2, gw in zip(weights2, global_weights)]
-    
+
     # Flatten gradients
     grad1_flat = np.concatenate([g.flatten() for g in grad1])
     grad2_flat = np.concatenate([g.flatten() for g in grad2])
-    
+
     # Cosine similarity
     dot_product = np.dot(grad1_flat, grad2_flat)
     norms = np.linalg.norm(grad1_flat) * np.linalg.norm(grad2_flat)
-    
+
     return dot_product / (norms + 1e-8)
 
 
