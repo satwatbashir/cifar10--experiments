@@ -4,8 +4,9 @@
 
 | Method | Accuracy | Rounds | Rank | Status |
 |--------|----------|--------|------|--------|
-| **Fedge v7** | **?** | 200 | **?** | 🔄 Testing |
+| **Fedge v8** | **?** | 200 | **?** | 🔄 Testing |
 | Fedge v3 | 60.23% | 100 | 1st | ✅ Done |
+| Fedge v7 | ~56.6% | 144 | - | ❌ Failed (collapse) |
 | Fedge v2 | 59.16% | 100 | 2nd | ✅ Done |
 | FedProx | 56.29% | 200 | 3rd | ✅ Baseline |
 | Fedge v6 | ~56.5% | 200 | 4th | ❌ Failed |
