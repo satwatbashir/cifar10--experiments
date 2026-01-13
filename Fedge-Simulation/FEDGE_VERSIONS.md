@@ -4,86 +4,79 @@
 
 | Method | Accuracy | Rounds | Rank | Status |
 |--------|----------|--------|------|--------|
-| **Fedge v6** | **?** | 200 | **?** | 🔄 Testing |
+| **Fedge v7** | **?** | 200 | **?** | 🔄 Testing |
 | Fedge v3 | 60.23% | 100 | 1st | ✅ Done |
 | Fedge v2 | 59.16% | 100 | 2nd | ✅ Done |
 | FedProx | 56.29% | 200 | 3rd | ✅ Baseline |
-| Fedge v4 | ~56% | 200 | 4th | ❌ Failed |
-| Fedge v5 | N/A | N/A | N/A | ⏭ Skipped |
-| HierFL | 50.58% | 200 | 5th | ✅ Baseline |
-| Fedge v1 | 45.07% | 200 | 6th | ✅ Done |
+| Fedge v6 | ~56.5% | 200 | 4th | ❌ Failed |
+| Fedge v4 | ~56% | 200 | 5th | ❌ Failed |
+| HierFL | 50.58% | 200 | 6th | ✅ Baseline |
+| Fedge v1 | 45.07% | 200 | 7th | ✅ Done |
 
 ---
 
-## v6: Server Isolation + Server-Level SCAFFOLD (Current)
+## v7: v3 Architecture + Client-Level SCAFFOLD (Current)
 
-### Key Innovation
+### Approach
 
-**Server-level SCAFFOLD** enables cross-server knowledge sharing through control variates, not model averaging.
+Use v3's global averaging architecture with **SCAFFOLD instead of FedProx** for drift correction.
 
-```
-                      ┌────────────────┐
-                      │    c_global    │  ← weighted avg of c_server_i
-                      │    (cloud)     │
-                      └───────┬────────┘
-                              │
-          ┌───────────────────┼───────────────────┐
-          │                   │                   │
-    ┌─────▼─────┐      ┌─────▼─────┐      ┌─────▼─────┐
-    │ c_server_0│      │ c_server_1│      │ c_server_2│
-    │ Server 0  │      │ Server 1  │      │ Server 2  │
-    └───────────┘      └───────────┘      └───────────┘
-```
-
-### How Knowledge Sharing Works
-
-| Old (v1-v3) | New (v6) |
-|-------------|----------|
-| Model averaging → kills specialization | Control variates → preserves specialization |
-| Same model for all servers | Each server has unique model |
-| No clustering effect | Meaningful clustering possible |
-
-### v6 Configuration
+### v7 Configuration
 
 | Parameter | Value | Purpose |
 |-----------|-------|---------|
-| server_isolation | true | Each server keeps own model |
-| scaffold_enabled | true | Client-level SCAFFOLD |
-| scaffold_server_enabled | true | **NEW: Server-level SCAFFOLD** |
-| scaffold_server_lr | 1.0 | eta for c_server update |
-| scaffold_correction_lr | 0.1 | Correction strength |
-| scaffold_clip_value | 10.0 | Prevent explosion |
-| prox_mu | 0.0 | Disabled (SCAFFOLD handles drift) |
-| SCAFFOLD_WARMUP_ROUNDS | 30 | Match clustering start |
+| server_isolation | **false** | Global averaging (v3 behavior) |
+| scaffold_enabled | **true** | Client-level SCAFFOLD |
+| scaffold_server_enabled | **false** | Not needed with global averaging |
+| prox_mu | **0.0** | Disabled (SCAFFOLD replaces FedProx) |
+| lr_gamma | 0.995 | LR decay |
+| SCAFFOLD_WARMUP_ROUNDS | 30 | Let model stabilize first |
 
-### v6 SCAFFOLD Formula
+### Why This Might Work
 
-```python
-# Update c_server_i (after server sends model to cloud)
-c_server_i_new = c_server_i_old - c_global + (1/(K*eta)) * (theta_cluster - theta_server_i)
+- SCAFFOLD is theoretically superior to FedProx for non-IID data
+- Global averaging ensures knowledge sharing (unlike v4/v6)
+- Control variates correct client drift without regularization penalty
 
-# Update c_global (weighted average)
-c_global = sum((n_samples[i] / total_samples) * c_server[i] for all servers)
+### Target
 
-# Apply correction (when distributing models)
-theta_corrected = theta_cluster - 0.1 * (c_server_i - c_global)
-```
+Beat v3's 60.23% accuracy.
 
-### Files Modified (v6)
+---
 
-| File | Change |
-|------|--------|
-| `fedge/server_scaffold.py` | NEW: ServerSCAFFOLD class |
-| `orchestrator.py` | Server-level SCAFFOLD integration |
-| `fedge/scaffold_utils.py` | Added clipping to client-level SCAFFOLD |
-| `pyproject.toml` | v6 configuration |
+## v6: FAILED - Server Isolation + Server-Level SCAFFOLD
 
-### Expected Outcome
+### v6 Results (200 rounds)
 
-- Servers specialize on non-IID data (server isolation)
-- Knowledge shared through c_global (server-level SCAFFOLD)
-- No collapse (clipping + longer warmup)
-- Target: >60.23% (beat v3)
+| Round | Accuracy |
+|-------|----------|
+| 30 | 48.96% |
+| 50 | 51.49% |
+| 100 | 54.70% |
+| 161 | 56.52% |
+| 200 | ~57% |
+
+**Final: ~57%** (worse than v3's 60.23%)
+
+### Why v6 Failed
+
+1. **Immediate isolation**: All 3 servers in separate clusters from round 1
+2. **No knowledge sharing during warmup**: Each server got its own model back
+3. **Server-level SCAFFOLD couldn't help**: `theta_cluster = theta_server` → control variates stayed ~0
+4. **Same problem as v4**: Server isolation kills accuracy
+
+### v6 Configuration (for reference)
+
+| Parameter | Value |
+|-----------|-------|
+| server_isolation | true |
+| scaffold_enabled | true |
+| scaffold_server_enabled | true |
+| prox_mu | 0.0 |
+
+### Lesson Learned
+
+Server isolation doesn't work for this setup. Global averaging (v3 approach) is necessary for good accuracy
 
 ---
 

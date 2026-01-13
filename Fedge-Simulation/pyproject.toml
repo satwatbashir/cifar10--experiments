@@ -37,22 +37,22 @@ weight_decay = 0.0
 clip_norm = 1.0
 momentum = 0.9
 lr_gamma = 0.995                 # LR decay: ~0.37 of initial LR by round 200
-prox_mu = 0.0                    # v6: Disabled (SCAFFOLD handles drift instead)
+prox_mu = 0.0                    # v7: Disabled (SCAFFOLD replaces FedProx)
 
 # Dataset
 dataset_flag = "cifar10"
 
-# v6: Server isolation (each server keeps own model before clustering)
-server_isolation = true
+# v7: Global averaging (v3 architecture)
+server_isolation = false         # All servers get same global model
 
-# Client-level SCAFFOLD
-scaffold_enabled = true          # v6: Enable client-level SCAFFOLD
+# Client-level SCAFFOLD (v7)
+scaffold_enabled = true          # SCAFFOLD instead of FedProx
 
-# Server-level SCAFFOLD (v6: cross-server knowledge sharing)
-scaffold_server_enabled = true   # Enable server-level control variates
-scaffold_server_lr = 1.0         # eta for c_server update
-scaffold_correction_lr = 0.1     # lr for correction application
-scaffold_clip_value = 10.0       # Clipping bound for control variates
+# Server-level SCAFFOLD (disabled for v7 - not needed with global averaging)
+scaffold_server_enabled = false
+scaffold_server_lr = 1.0
+scaffold_correction_lr = 0.1
+scaffold_clip_value = 10.0
 
 # Learning parameters
 lr_init = 0.01
