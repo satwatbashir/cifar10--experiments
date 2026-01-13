@@ -63,6 +63,78 @@ def _train_transform():
         Normalize(_CIFAR10_MEAN, _CIFAR10_STD),
     ])
 
+# ───────────────────────── ResNet-18 for CIFAR-10 ──────────────────────────
+# Adapted for 32x32 images: uses 3x3 conv with stride 1, no initial maxpool
+# Reference: NIID-Bench achieves 90.2% with SCAFFOLD on ResNet
+# Expected accuracy: 70-85% depending on non-IID severity
+
+class BasicBlock(nn.Module):
+    """Basic residual block for ResNet-18/34."""
+    expansion = 1
+
+    def __init__(self, in_planes, planes, stride=1):
+        super().__init__()
+        self.conv1 = nn.Conv2d(in_planes, planes, kernel_size=3, stride=stride, padding=1, bias=False)
+        self.bn1 = nn.BatchNorm2d(planes)
+        self.conv2 = nn.Conv2d(planes, planes, kernel_size=3, stride=1, padding=1, bias=False)
+        self.bn2 = nn.BatchNorm2d(planes)
+
+        self.shortcut = nn.Sequential()
+        if stride != 1 or in_planes != self.expansion * planes:
+            self.shortcut = nn.Sequential(
+                nn.Conv2d(in_planes, self.expansion * planes, kernel_size=1, stride=stride, bias=False),
+                nn.BatchNorm2d(self.expansion * planes)
+            )
+
+    def forward(self, x):
+        out = F.relu(self.bn1(self.conv1(x)))
+        out = self.bn2(self.conv2(out))
+        out += self.shortcut(x)
+        out = F.relu(out)
+        return out
+
+
+class ResNet(nn.Module):
+    """ResNet for CIFAR-10 (32x32 images)."""
+    def __init__(self, block, num_blocks, num_classes=10):
+        super().__init__()
+        self.in_planes = 64
+
+        # CIFAR-10 adaptation: 3x3 conv, stride 1, no maxpool
+        self.conv1 = nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1, bias=False)
+        self.bn1 = nn.BatchNorm2d(64)
+
+        self.layer1 = self._make_layer(block, 64, num_blocks[0], stride=1)
+        self.layer2 = self._make_layer(block, 128, num_blocks[1], stride=2)
+        self.layer3 = self._make_layer(block, 256, num_blocks[2], stride=2)
+        self.layer4 = self._make_layer(block, 512, num_blocks[3], stride=2)
+        self.linear = nn.Linear(512 * block.expansion, num_classes)
+
+    def _make_layer(self, block, planes, num_blocks, stride):
+        strides = [stride] + [1] * (num_blocks - 1)
+        layers = []
+        for stride in strides:
+            layers.append(block(self.in_planes, planes, stride))
+            self.in_planes = planes * block.expansion
+        return nn.Sequential(*layers)
+
+    def forward(self, x):
+        out = F.relu(self.bn1(self.conv1(x)))
+        out = self.layer1(out)
+        out = self.layer2(out)
+        out = self.layer3(out)
+        out = self.layer4(out)
+        out = F.adaptive_avg_pool2d(out, (1, 1))
+        out = out.view(out.size(0), -1)
+        out = self.linear(out)
+        return out
+
+
+def ResNet18(num_classes=10):
+    """ResNet-18 for CIFAR-10 (~11.2M parameters). Target: 70-85% accuracy."""
+    return ResNet(BasicBlock, [2, 2, 2, 2], num_classes=num_classes)
+
+
 # LeNet-style CNN for CIFAR-10 (NIID-Bench standard) - matches FedProx/HierFL
 class Net(nn.Module):
     """LeNet-style CNN for CIFAR-10 (NIID-Bench standard). ~62K params."""
@@ -87,6 +159,29 @@ class Net(nn.Module):
         x = F.relu(self.fc1(x))
         x = F.relu(self.fc2(x))
         return self.fc3(x)
+
+
+# Model factory function
+def get_model(model_name: str = "lenet", num_classes: int = 10) -> nn.Module:
+    """
+    Factory function to get model by name.
+
+    Args:
+        model_name: "lenet" or "resnet18"
+        num_classes: Number of output classes (default: 10 for CIFAR-10)
+
+    Returns:
+        Model instance
+    """
+    model_name = model_name.lower()
+    if model_name == "resnet18":
+        logger.info(f"[get_model] Creating ResNet-18 (~11.2M params)")
+        return ResNet18(num_classes=num_classes)
+    elif model_name in ("lenet", "net"):
+        logger.info(f"[get_model] Creating LeNet (~62K params)")
+        return Net(n_class=num_classes)
+    else:
+        raise ValueError(f"Unknown model: {model_name}. Use 'lenet' or 'resnet18'")
 
 
 # ──────────────────────── Torchvision CIFAR-10 loader ──────────────────────

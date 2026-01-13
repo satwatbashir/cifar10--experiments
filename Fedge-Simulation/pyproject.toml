@@ -37,7 +37,7 @@ weight_decay = 0.0
 clip_norm = 1.0
 momentum = 0.9
 lr_gamma = 0.995                 # LR decay: ~0.37 of initial LR by round 200
-prox_mu = 0.0                    # v7: Disabled (SCAFFOLD replaces FedProx)
+prox_mu = 0.0                    # v3: Disabled (pure FedAvg + clustering)
 
 # Dataset
 dataset_flag = "cifar10"
@@ -45,8 +45,8 @@ dataset_flag = "cifar10"
 # v7: Global averaging (v3 architecture)
 server_isolation = false         # All servers get same global model
 
-# Client-level SCAFFOLD (v7)
-scaffold_enabled = true          # SCAFFOLD instead of FedProx
+# Client-level SCAFFOLD (v8: enabled from round 1)
+scaffold_enabled = true          # v8: SCAFFOLD from start, no warmup delay
 
 # Server-level SCAFFOLD (disabled for v7 - not needed with global averaging)
 scaffold_server_enabled = false

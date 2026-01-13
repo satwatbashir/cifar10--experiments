@@ -94,7 +94,7 @@ CLUSTER_METHOD = str(CLUSTER_CFG.get("method", "weight"))  # "weight" or "gradie
 CLUSTER_BETTER_DELTA = float(HIER_CFG.get("cluster_better_delta", 0.0))
 
 # SCAFFOLD warmup (if SCAFFOLD is enabled)
-SCAFFOLD_WARMUP_ROUNDS = 30  # v6: Match clustering start_round
+SCAFFOLD_WARMUP_ROUNDS = 0  # v8: Start SCAFFOLD from round 1 (no warmup)
 
 # Server-level SCAFFOLD config (v6)
 SCAFFOLD_SERVER_ENABLED = bool(HIER_CFG.get("scaffold_server_enabled", False))
