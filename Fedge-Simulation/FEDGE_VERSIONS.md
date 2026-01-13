@@ -16,32 +16,63 @@
 
 ---
 
-## v7: v3 Architecture + Client-Level SCAFFOLD (Current)
+## v8: SCAFFOLD from Round 1 (Current)
 
 ### Approach
 
-Use v3's global averaging architecture with **SCAFFOLD instead of FedProx** for drift correction.
+Fix v7's collapse by starting SCAFFOLD from round 1 instead of after 30-round warmup.
 
-### v7 Configuration
+### Why v7 Failed
 
-| Parameter | Value | Purpose |
-|-----------|-------|---------|
-| server_isolation | **false** | Global averaging (v3 behavior) |
-| scaffold_enabled | **true** | Client-level SCAFFOLD |
-| scaffold_server_enabled | **false** | Not needed with global averaging |
-| prox_mu | **0.0** | Disabled (SCAFFOLD replaces FedProx) |
-| lr_gamma | 0.995 | LR decay |
-| SCAFFOLD_WARMUP_ROUNDS | 30 | Let model stabilize first |
+v7 used SCAFFOLD with 30-round warmup. Results:
+- Rounds 1-31: Good progress (25% → 52.2%)
+- Round 32: SCAFFOLD activated → **collapse to 32.7%**
+- Rounds 33-144: Recovery to 56.6%, then plateau
 
-### Why This Might Work
+**Root cause:** Control variates initialized at round 31 were incompatible with the already-trained model, causing 20x gradient amplification via `model_diff / (local_epochs * lr)`.
 
-- SCAFFOLD is theoretically superior to FedProx for non-IID data
-- Global averaging ensures knowledge sharing (unlike v4/v6)
-- Control variates correct client drift without regularization penalty
+### v8 Fix
+
+Start SCAFFOLD from round 1 (no warmup). Control variates build gradually alongside model training.
+
+### v8 Configuration
+
+| Parameter | v7 | v8 |
+|-----------|-----|-----|
+| scaffold_enabled | true | **true** |
+| SCAFFOLD_WARMUP_ROUNDS | 30 | **0** |
+| server_isolation | false | false |
+| prox_mu | 0.0 | 0.0 |
 
 ### Target
 
-Beat v3's 60.23% accuracy.
+Beat v3's 60.23% with properly initialized SCAFFOLD.
+
+---
+
+## v7: FAILED - SCAFFOLD with 30-Round Warmup
+
+### v7 Results (144 rounds)
+
+| Round | Accuracy | Event |
+|-------|----------|-------|
+| 1-31 | 25% → 52.2% | Good progress |
+| 32 | **32.7%** | SCAFFOLD activated → COLLAPSE |
+| 33-50 | 20% → 35% | Recovery |
+| 100 | ~55% | Slow climb |
+| 144 | ~56.6% | Plateau |
+
+**Final: ~56.6%** (worse than v3's 60.23%)
+
+### Why v7 Failed
+
+1. **Sudden SCAFFOLD activation**: Control variates initialized at round 31 with model that had already converged partially
+2. **20x gradient amplification**: `model_diff / (local_epochs * lr)` = `diff / 0.05`
+3. **Model instability**: Large corrections pushed model off its learned distribution
+
+### Lesson Learned
+
+SCAFFOLD warmup causes collapse. Must start SCAFFOLD from round 1 so control variates evolve with the model.
 
 ---
 
