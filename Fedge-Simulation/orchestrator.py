@@ -42,6 +42,7 @@ from fedge.cluster_utils import cifar10_weight_clustering as weight_clustering
 from fedge.cluster_utils import gradient_based_clustering
 from fedge.partitioning import hier_dirichlet_indices, write_partitions
 from fedge.stats import _mean_std_ci
+from fedge.server_scaffold import ServerSCAFFOLD
 
 # Configure logging
 logging.basicConfig(
@@ -93,7 +94,16 @@ CLUSTER_METHOD = str(CLUSTER_CFG.get("method", "weight"))  # "weight" or "gradie
 CLUSTER_BETTER_DELTA = float(HIER_CFG.get("cluster_better_delta", 0.0))
 
 # SCAFFOLD warmup (if SCAFFOLD is enabled)
-SCAFFOLD_WARMUP_ROUNDS = 5
+SCAFFOLD_WARMUP_ROUNDS = 30  # v6: Match clustering start_round
+
+# Server-level SCAFFOLD config (v6)
+SCAFFOLD_SERVER_ENABLED = bool(HIER_CFG.get("scaffold_server_enabled", False))
+SCAFFOLD_SERVER_LR = float(HIER_CFG.get("scaffold_server_lr", 1.0))
+SCAFFOLD_CORRECTION_LR = float(HIER_CFG.get("scaffold_correction_lr", 0.1))
+SCAFFOLD_CLIP_VALUE = float(HIER_CFG.get("scaffold_clip_value", 10.0))
+
+# Server isolation config (v6)
+SERVER_ISOLATION = bool(HIER_CFG.get("server_isolation", False))
 
 # Seed
 SEED = int(os.environ.get("SEED", HIER_CFG.get("dirichlet", {}).get("seed", 42)))
@@ -439,6 +449,9 @@ class CloudAggregator:
         # Track previous server weights for gradient-based clustering
         self.previous_server_weights: Dict[int, List[np.ndarray]] = {}
 
+        # Server-level SCAFFOLD (v6)
+        self.server_scaffold = ServerSCAFFOLD(num_servers=num_servers) if SCAFFOLD_SERVER_ENABLED else None
+
         # Metrics
         self.round_metrics = []
         self.cluster_history = []
@@ -518,16 +531,44 @@ class CloudAggregator:
             self._save_cluster_artifacts(global_round, labels, similarity_matrix, server_ids)
             logger.info(f"[Cloud] Clustering result: {len(unique_clusters)} clusters, map={self.cluster_map}")
         else:
-            # FIX: Each server keeps its own model (no global averaging before clustering)
-            # This allows servers to naturally diverge based on their non-IID data
-            self.cluster_map = {sid: sid for sid in server_ids}
-            self.cluster_parameters = {
-                sid: weights_list[i] for i, sid in enumerate(server_ids)
-            }
+            # Before clustering starts
+            if SERVER_ISOLATION:
+                # v6: Each server keeps its own model (allows divergence)
+                self.cluster_map = {sid: sid for sid in server_ids}
+                self.cluster_parameters = {
+                    sid: weights_list[i] for i, sid in enumerate(server_ids)
+                }
+                logger.debug(f"[Cloud] Server isolation: each server keeps own model")
+            else:
+                # v1-v5: All servers get the global model
+                self.cluster_map = {sid: 0 for sid in server_ids}
+                self.cluster_parameters = {0: global_weights}
 
         # Store current weights for next round's gradient computation
         for i, sid in enumerate(server_ids):
             self.previous_server_weights[sid] = weights_list[i]
+
+        # Server-level SCAFFOLD: update control variates (v6)
+        if self.server_scaffold is not None and global_round >= SCAFFOLD_WARMUP_ROUNDS:
+            for i, sid in enumerate(server_ids):
+                cluster_id = self.cluster_map[sid]
+                theta_cluster = self.cluster_parameters[cluster_id]
+
+                self.server_scaffold.update_server_control(
+                    server_id=sid,
+                    theta_server=weights_list[i],
+                    theta_cluster=theta_cluster,
+                    n_samples=sample_counts[i],
+                    K=SERVER_ROUNDS_PER_GLOBAL,
+                    eta=SCAFFOLD_SERVER_LR,
+                    clip_value=SCAFFOLD_CLIP_VALUE
+                )
+
+            self.server_scaffold.update_global_control()
+
+            # Log server divergences
+            divergences = self.server_scaffold.get_server_divergence()
+            logger.info(f"[Cloud] Server-level SCAFFOLD divergences: {divergences}")
 
         metrics = {
             "global_round": global_round,
@@ -538,10 +579,28 @@ class CloudAggregator:
 
         return self.cluster_parameters
 
-    def get_cluster_model(self, server_id: int) -> List[np.ndarray]:
-        """Get the cluster-specific model for a server."""
+    def get_cluster_model(self, server_id: int, apply_scaffold: bool = True) -> List[np.ndarray]:
+        """Get the cluster-specific model for a server, with optional SCAFFOLD correction.
+
+        Args:
+            server_id: Server ID
+            apply_scaffold: Whether to apply server-level SCAFFOLD correction
+
+        Returns:
+            Model weights (possibly corrected)
+        """
         cluster_id = self.cluster_map.get(server_id, 0)
-        return self.cluster_parameters.get(cluster_id, list(self.cluster_parameters.values())[0])
+        theta_cluster = self.cluster_parameters.get(cluster_id, list(self.cluster_parameters.values())[0])
+
+        # Apply server-level SCAFFOLD correction (v6)
+        if apply_scaffold and self.server_scaffold is not None:
+            return self.server_scaffold.apply_correction(
+                server_id=server_id,
+                theta_cluster=theta_cluster,
+                correction_lr=SCAFFOLD_CORRECTION_LR
+            )
+
+        return theta_cluster
 
     def _save_cluster_artifacts(
         self,

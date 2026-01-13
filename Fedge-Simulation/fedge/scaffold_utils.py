@@ -48,32 +48,43 @@ class SCAFFOLDControlVariates:
         """Get server control variate c_server."""
         return self.server_control
         
-    def update_client_control(self, 
+    def update_client_control(self,
                             local_model: nn.Module,
                             global_model: nn.Module,
                             learning_rate: float,
-                            local_epochs: int) -> None:
+                            local_epochs: int,
+                            clip_value: float = 10.0) -> None:
         """
         Update client control variate after local training.
-        
+
         Formula: c_i^{new} = c_i^{old} - c_server + (1/K*lr) * (global_model - local_model)
         where K is the number of local steps.
+
+        Args:
+            local_model: Model after local training
+            global_model: Global model before local training
+            learning_rate: Learning rate used in training
+            local_epochs: Number of local epochs
+            clip_value: Clipping bound for control variates (v6 fix)
         """
         with torch.no_grad():
             for name, local_param in local_model.named_parameters():
                 if name in self.client_control:
                     global_param = dict(global_model.named_parameters())[name]
-                    
+
                     # Compute model difference
                     model_diff = global_param.data - local_param.data
-                    
-                    # Update control variate
-                    self.client_control[name] = (
-                        self.client_control[name] 
+
+                    # Update control variate (SCAFFOLD Option II)
+                    new_control = (
+                        self.client_control[name]
                         - self.server_control[name]
                         + model_diff / (local_epochs * learning_rate)
                     )
-                    
+
+                    # v6 fix: Clip to prevent explosion
+                    self.client_control[name] = torch.clamp(new_control, min=-clip_value, max=clip_value)
+
         logger.debug(f"Updated client control variate for {len(self.client_control)} parameters")
         
     def update_server_control(self, 

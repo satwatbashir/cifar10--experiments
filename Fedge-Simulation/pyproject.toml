@@ -37,13 +37,22 @@ weight_decay = 0.0
 clip_norm = 1.0
 momentum = 0.9
 lr_gamma = 0.995                 # LR decay: ~0.37 of initial LR by round 200
-prox_mu = 0.01
+prox_mu = 0.0                    # v6: Disabled (SCAFFOLD handles drift instead)
 
 # Dataset
 dataset_flag = "cifar10"
 
-# SCAFFOLD + FedProx parameters
-scaffold_enabled = false
+# v6: Server isolation (each server keeps own model before clustering)
+server_isolation = true
+
+# Client-level SCAFFOLD
+scaffold_enabled = true          # v6: Enable client-level SCAFFOLD
+
+# Server-level SCAFFOLD (v6: cross-server knowledge sharing)
+scaffold_server_enabled = true   # Enable server-level control variates
+scaffold_server_lr = 1.0         # eta for c_server update
+scaffold_correction_lr = 0.1     # lr for correction application
+scaffold_clip_value = 10.0       # Clipping bound for control variates
 
 # Learning parameters
 lr_init = 0.01
@@ -69,8 +78,8 @@ seed         = 42
 enable = true
 start_round = 30                 # clustering begins after models differentiate
 frequency = 1                    # cluster every cloud round
-method = "gradient"              # "gradient" (recommended) or "weight" for fallback
-tau = 0.5                        # Similarity threshold: merge if similarity >= tau
+method = "weight"                # "weight" clustering (v3 approach)
+tau = 0.4                        # Similarity threshold (v3 value)
 
 # System Configuration
 [tool.flwr.cluster.batch_sizes]
