@@ -5,8 +5,12 @@
 | Method | Accuracy | Rounds | Rank | Status |
 |--------|----------|--------|------|--------|
 | NIID-Bench SCAFFOLD | 69.8% | - | - | 📊 Target Baseline |
-| **Fedge v10** | **65-68%** | 200 | - | 🔄 Testing (v9 + Data Augmentation) |
-| Fedge v9 | 62.9% | 200 | - | ✅ Done (SCAFFOLD fixed, plateau at 62%) |
+| Fedge v14 | 68-70% | 200 | - | 📋 Planned (scaling=20.0, paper formula) |
+| Fedge v13 | 67-70% | 200 | - | 📋 Planned (scaling=5.0, aggressive) |
+| Fedge v12 | 66-68% | 200 | - | 📋 Planned (scaling=2.0, moderate) |
+| **Fedge v11** | **64-67%** | 200 | - | 🔄 Testing (scaling=1.0, 10x increase) |
+| Fedge v10 | ~57-59% | 200 | - | ❌ Failed (augmentation + weak SCAFFOLD) |
+| Fedge v9 | 62.9% | 200 | - | ✅ Done (SCAFFOLD fixed, but 200x undercorrection) |
 | Fedge v3 | 60.23% | 100 | 1st | ✅ Done |
 | Fedge v2 | 59.16% | 100 | 2nd | ✅ Done |
 | Fedge v7 | 58.5% | 200 | - | ❌ Failed (collapse) |
@@ -19,7 +23,7 @@
 
 ---
 
-## v10: Data Augmentation - Target 65-68%
+## v10: Data Augmentation - FAILED (~57-59%)
 
 ### Goal
 
@@ -29,47 +33,205 @@ Add data augmentation to v9 base to break the 62% plateau.
 
 v9 SCAFFOLD is stable but plateaued at 62.9%. Per the fallback plan (Scenario B: accuracy < 65%), adding data augmentation is the next step.
 
-### v10 Changes
+### v10 Results: FAILED - Worse Than v9
 
-| Component | v9 | v10 | Expected Gain |
-|-----------|-----|-----|---------------|
-| AutoAugment | None | CIFAR-10 policy | +2-3% |
-| Cutout | None | 16x16 random erasing | +1-2% |
-| SCAFFOLD | Enabled (fixed) | Enabled (same) | - |
+| Round | v10 Actual | v9 Actual | Gap |
+|-------|-----------|-----------|-----|
+| 20 | 42.4% | 48.5% | **-6.1%** |
+| 50 | 49.4% | 55.8% | **-6.4%** |
+| 100 | 53.4% | 59.6% | **-6.2%** |
+| 144 | 55.7% | ~61.5% | **~-6%** |
+| **200 (proj)** | **~57-59%** | **62.9%** | **-4 to -6%** |
 
-### v10 Code Changes
+**v10 is consistently ~6% behind v9 and NOT catching up.**
 
-**File:** `fedge/task.py` - `_train_transform()` function
+### Root Cause Analysis
+
+1. **Augmentation makes training harder** - AutoAugment + RandomErasing increase sample diversity, requiring more gradient updates to learn
+
+2. **Weak SCAFFOLD can't compensate** - With scaling_factor=0.1, SCAFFOLD corrections are ~200x smaller than the paper formula (20.0). Control variates barely influence training.
+
+3. **Double penalty** - Harder training + essentially disabled SCAFFOLD = worse than v9 (which had basic transforms but same weak SCAFFOLD)
+
+### v10 Configuration (for reference)
+
+| Component | v9 | v10 | Actual Gain |
+|-----------|-----|-----|-------------|
+| AutoAugment | None | CIFAR-10 policy | **-6%** (hurt!) |
+| Cutout | None | 16x16 random erasing | (included above) |
+| SCAFFOLD | Enabled (0.1 scaling) | Enabled (same) | No benefit |
+
+### Lesson Learned
+
+Data augmentation requires stronger SCAFFOLD to compensate for harder training. With weak SCAFFOLD (scaling=0.1), augmentation hurts more than it helps.
+
+---
+
+## v11: SCAFFOLD Scaling Fix - Target 64-67%
+
+### Goal
+
+Fix the root cause of v9/v10 underperformance: SCAFFOLD is ~200x undercorrected.
+
+### Why v11 (Not v10b)?
+
+| Option | Change | Expected Effect |
+|--------|--------|-----------------|
+| v10b (weight_decay) | Add L2 regularization | Won't fix core problem - SCAFFOLD still ~200x undercorrection |
+| **v11 (scaling=1.0)** | **10x SCAFFOLD increase** | **Addresses root cause - control variates actually work** |
+
+**v11 targets the fundamental issue: SCAFFOLD is essentially disabled.**
+
+### v11 Configuration
+
+```toml
+# pyproject.toml - v11 SCAFFOLD config
+scaffold_enabled = true
+scaffold_scaling_factor = 1.0    # v11: 10x increase from v9's 0.1
+scaffold_correction_clip = 0.1   # Keep same (prevents gradient explosion)
+scaffold_warmup_rounds = 10      # Keep same (gradual activation)
+scaffold_clip_value = 1.0        # Keep same (bounds control variates)
+```
+
+### v11 Code Changes
+
+**File:** `fedge/task.py` - Remove v10 augmentation, revert to v9 basic transforms
 
 ```python
-# v10: Add AutoAugment + Cutout
-from torchvision.transforms import AutoAugment, AutoAugmentPolicy
-
+# v11: Revert to basic transforms (isolate scaling fix effect)
 def _train_transform():
     return Compose([
         RandomCrop(32, padding=4),
         RandomHorizontalFlip(),
-        AutoAugment(policy=AutoAugmentPolicy.CIFAR10),  # NEW
         ToTensor(),
         Normalize(_CIFAR10_MEAN, _CIFAR10_STD),
-        RandomErasing(p=0.5, scale=(0.02, 0.33)),       # NEW (Cutout equivalent)
     ])
 ```
 
 ### Expected Results
 
-| Phase | Rounds | Expected Accuracy |
-|-------|--------|-------------------|
-| Early | 1-20 | 25% → 45% |
-| Mid | 20-50 | 45% → 55% |
-| Late | 50-100 | 55% → 60% |
-| Final | 100-200 | 60% → **65-68%** |
+| Phase | Rounds | v9 Actual | v11 Expected |
+|-------|--------|-----------|--------------|
+| Early | 1-20 | 24.9% → 48.5% | 25% → 50% |
+| Mid | 20-50 | 48.5% → 55.8% | 50% → 58% |
+| Late | 50-100 | 55.8% → 59.6% | 58% → 63% |
+| Final | 100-200 | 59.6% → 62.9% | 63% → **65-67%** |
 
-### If v10 < 65%: Add Weight Decay (v10b)
+### Why This Should Work
 
-```toml
-weight_decay = 0.0005    # L2 regularization
+v9's safeguards (correction_clip, warmup, clip_value) prevent v7/v8-style collapse. Increasing scaling_factor with these safeguards should be safe AND effective.
+
+### If v11 Fails: Next Steps
+
+| Result | Next Version | Change |
+|--------|--------------|--------|
+| Collapses | v11a | Reduce to scaling=0.5, increase warmup to 20 |
+| Works but < 65% | v12 | Increase to scaling=2.0 |
+| Works at 65%+ | v11+aug | Add augmentation back (now SCAFFOLD can handle it) |
+
+---
+
+## v11-v14: SCAFFOLD Scaling Fix Plans (Pending v10 Results)
+
+### Root Cause Analysis: Why v9 Plateaued at 62.9%
+
+**Key Discovery:** The v9 "fix" overcorrected by 200x, essentially disabling SCAFFOLD.
+
+#### The Original SCAFFOLD Formula (Paper)
 ```
+c_i^{new} = c_i - c_server + (1/Kη) × (w_global - w_local)
+```
+Where K=5 (local_epochs), η=0.01 (learning_rate)
+**Scaling factor = 1/(Kη) = 1/0.05 = 20**
+
+#### What v9 Changed
+| Component | v7/v8 (Collapsed) | v9 (Stable but Weak) | Impact |
+|-----------|-------------------|----------------------|--------|
+| Scaling factor | 20 (paper formula) | **0.1** | **200x reduction** |
+| Control variate clip | 10.0 | 1.0 | Good fix |
+| Correction clip | None | 0.1 | Good fix |
+| Warmup | None | 10 rounds | Good fix |
+
+**Result:** Control variates are ~200x smaller than intended → SCAFFOLD corrections are nearly zero → Algorithm essentially disabled.
+
+#### Evidence
+| Version | Scaling | Result | Improvement over v3 |
+|---------|---------|--------|---------------------|
+| NIID-Bench | ~20 | 69.8% | +9.6% |
+| v9 | 0.1 | 62.9% | **+2.7%** (should be +6-10%) |
+| v3 | N/A | 60.23% | Baseline |
+
+The +2.7% improvement is too small for proper SCAFFOLD, indicating it's barely functioning.
+
+### Proposed Fix: Increase Scaling Factor with Safeguards
+
+#### v11: Conservative (scaling_factor = 1.0)
+```toml
+scaffold_scaling_factor = 1.0    # 10x increase from v9's 0.1
+scaffold_correction_clip = 0.1  # Keep same
+scaffold_clip_value = 1.0       # Keep same
+scaffold_warmup_rounds = 10     # Keep same
+```
+**Expected:** 64-67% | **Risk:** Low
+
+#### v12: Moderate (scaling_factor = 2.0)
+```toml
+scaffold_scaling_factor = 2.0    # 20x increase from v9's 0.1
+scaffold_correction_clip = 0.2  # Slightly larger
+scaffold_clip_value = 1.0       # Keep same
+scaffold_warmup_rounds = 10     # Keep same
+```
+**Expected:** 66-68% | **Risk:** Low-Medium
+
+#### v13: Aggressive (scaling_factor = 5.0)
+```toml
+scaffold_scaling_factor = 5.0    # 50x increase from v9's 0.1
+scaffold_correction_clip = 0.3  # Allow larger corrections
+scaffold_clip_value = 1.0       # Keep same (critical)
+scaffold_warmup_rounds = 15     # Longer warmup
+```
+**Expected:** 67-70% | **Risk:** Medium
+
+#### v14: Paper Formula with Safeguards (scaling_factor = 20.0)
+```toml
+scaffold_scaling_factor = 20.0   # Match paper exactly
+scaffold_correction_clip = 0.5   # Allow larger corrections
+scaffold_clip_value = 1.0        # Critical safety bound
+scaffold_warmup_rounds = 20      # Longer warmup
+```
+**Expected:** 68-70% | **Risk:** Higher (but we have safeguards v7/v8 lacked)
+
+### Testing Strategy
+
+| Order | Version | Change from v9 | Target | Risk |
+|-------|---------|----------------|--------|------|
+| 1 | v11 | scaling 0.1→1.0 | 64-67% | Low |
+| 2 | v12 | scaling 0.1→2.0, clip 0.1→0.2 | 66-68% | Low-Medium |
+| 3 | v13 | scaling 0.1→5.0, clip 0.1→0.3 | 67-70% | Medium |
+| 4 | v14 | scaling 0.1→20.0 (paper) | 68-70% | Higher |
+
+**Strategy:** Start with v11. If stable but accuracy insufficient, proceed to v12, etc.
+
+### Stability Monitoring
+
+**Good signs:**
+- Faster accuracy improvement in rounds 20-100 than v9
+- Control variate magnitudes: 0.01-0.5 (not 0.001)
+- Smaller oscillation in late rounds
+
+**Warning signs (reduce scaling):**
+- Sudden accuracy drop >5% in one round
+- Wild oscillation (±3% per round)
+- Control variates hitting clip bounds constantly
+
+### Why This Should Work
+
+The v7/v8 collapse was NOT caused by the 20x scaling factor. It was caused by:
+1. No clipping on control variates (exploded to 10+)
+2. No clipping on corrections (destroyed gradients)
+3. Sudden activation (no warmup)
+
+**v9 fixed these safety issues but overcorrected the scaling.** By keeping the safeguards but increasing the scaling factor, we should get both stability AND proper drift correction.
 
 ---
 
@@ -794,11 +956,14 @@ SCAFFOLD needs careful tuning:
 
 ## Git History
 
-- **v10: (current)** - Data augmentation to break 62% plateau
-  - New: AutoAugment with CIFAR-10 policy
-  - New: RandomErasing (Cutout equivalent) p=0.5
-  - SCAFFOLD: Unchanged from v9 (stable, no collapse)
-  - Target: 65-68%
+- **v11: (current)** - SCAFFOLD scaling fix (10x increase)
+  - Change: `scaffold_scaling_factor = 0.1` → `1.0` (10x increase)
+  - Revert: Remove v10 data augmentation (isolate scaling effect)
+  - Target: 64-67%
+  - Files: `pyproject.toml`, `fedge/task.py` (_train_transform)
+- v10: ~57-59% - Data augmentation (FAILED - worse than v9)
+  - Added: AutoAugment + RandomErasing
+  - Problem: Weak SCAFFOLD + harder training = double penalty
   - Files: `fedge/task.py` (_train_transform)
 - v9: 62.9% - SCAFFOLD bug fixes (stable but plateaued)
   - Fix: Replace `÷(K*lr)` with `× scaling_factor` (prevents 20x amplification)
