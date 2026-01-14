@@ -6,7 +6,7 @@
 |--------|----------|--------|------|--------|
 | **Fedge v8** | **?** | 200 | **?** | 🔄 Testing |
 | Fedge v3 | 60.23% | 100 | 1st | ✅ Done |
-| Fedge v7 | ~56.6% | 144 | - | ❌ Failed (collapse) |
+| Fedge v7 | 58.5% | 200 | - | ❌ Failed (collapse) |
 | Fedge v2 | 59.16% | 100 | 2nd | ✅ Done |
 | FedProx | 56.29% | 200 | 3rd | ✅ Baseline |
 | Fedge v6 | ~56.5% | 200 | 4th | ❌ Failed |
@@ -52,17 +52,18 @@ Beat v3's 60.23% with properly initialized SCAFFOLD.
 
 ## v7: FAILED - SCAFFOLD with 30-Round Warmup
 
-### v7 Results (144 rounds)
+### v7 Results (200 rounds)
 
 | Round | Accuracy | Event |
 |-------|----------|-------|
 | 1-31 | 25% → 52.2% | Good progress |
 | 32 | **32.7%** | SCAFFOLD activated → COLLAPSE |
-| 33-50 | 20% → 35% | Recovery |
-| 100 | ~55% | Slow climb |
-| 144 | ~56.6% | Plateau |
+| 35 | 19.8% | Bottom |
+| 100 | 54.1% | Recovery |
+| 150 | 56.9% | Slow climb |
+| 200 | **58.5%** | Final |
 
-**Final: ~56.6%** (worse than v3's 60.23%)
+**Final: 58.5%** (worse than v3's 60.23% at 100 rounds)
 
 ### Why v7 Failed
 
