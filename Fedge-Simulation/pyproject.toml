@@ -46,6 +46,7 @@ dataset_flag = "cifar10"
 server_isolation = false         # All servers get same global model
 
 # Client-level SCAFFOLD (v9: fixed amplification and clipping bugs)
+# v10: SCAFFOLD unchanged, data augmentation added in task.py (AutoAugment + RandomErasing)
 scaffold_enabled = true          # Enable SCAFFOLD from round 1
 scaffold_scaling_factor = 0.1    # v9: replaces 1/(K*lr) division to prevent 20x amplification
 scaffold_correction_clip = 0.1   # v9: tight bound on corrections applied to gradients

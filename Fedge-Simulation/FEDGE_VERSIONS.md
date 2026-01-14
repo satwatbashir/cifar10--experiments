@@ -4,15 +4,307 @@
 
 | Method | Accuracy | Rounds | Rank | Status |
 |--------|----------|--------|------|--------|
-| Fedge v8 | 32.1% | 186 | - | ❌ Failed (immediate collapse) |
+| NIID-Bench SCAFFOLD | 69.8% | - | - | 📊 Target Baseline |
+| **Fedge v10** | **65-68%** | 200 | - | 🔄 Testing (v9 + Data Augmentation) |
+| Fedge v9 | 62.9% | 200 | - | ✅ Done (SCAFFOLD fixed, plateau at 62%) |
 | Fedge v3 | 60.23% | 100 | 1st | ✅ Done |
-| Fedge v7 | 58.5% | 200 | - | ❌ Failed (collapse) |
 | Fedge v2 | 59.16% | 100 | 2nd | ✅ Done |
+| Fedge v7 | 58.5% | 200 | - | ❌ Failed (collapse) |
 | FedProx | 56.29% | 200 | 3rd | ✅ Baseline |
 | Fedge v6 | ~56.5% | 200 | 4th | ❌ Failed |
 | Fedge v4 | ~56% | 200 | 5th | ❌ Failed |
 | HierFL | 50.58% | 200 | 6th | ✅ Baseline |
 | Fedge v1 | 45.07% | 200 | 7th | ✅ Done |
+| Fedge v8 | 32.1% | 186 | - | ❌ Failed (immediate collapse) |
+
+---
+
+## v10: Data Augmentation - Target 65-68%
+
+### Goal
+
+Add data augmentation to v9 base to break the 62% plateau.
+
+### Approach
+
+v9 SCAFFOLD is stable but plateaued at 62.9%. Per the fallback plan (Scenario B: accuracy < 65%), adding data augmentation is the next step.
+
+### v10 Changes
+
+| Component | v9 | v10 | Expected Gain |
+|-----------|-----|-----|---------------|
+| AutoAugment | None | CIFAR-10 policy | +2-3% |
+| Cutout | None | 16x16 random erasing | +1-2% |
+| SCAFFOLD | Enabled (fixed) | Enabled (same) | - |
+
+### v10 Code Changes
+
+**File:** `fedge/task.py` - `_train_transform()` function
+
+```python
+# v10: Add AutoAugment + Cutout
+from torchvision.transforms import AutoAugment, AutoAugmentPolicy
+
+def _train_transform():
+    return Compose([
+        RandomCrop(32, padding=4),
+        RandomHorizontalFlip(),
+        AutoAugment(policy=AutoAugmentPolicy.CIFAR10),  # NEW
+        ToTensor(),
+        Normalize(_CIFAR10_MEAN, _CIFAR10_STD),
+        RandomErasing(p=0.5, scale=(0.02, 0.33)),       # NEW (Cutout equivalent)
+    ])
+```
+
+### Expected Results
+
+| Phase | Rounds | Expected Accuracy |
+|-------|--------|-------------------|
+| Early | 1-20 | 25% → 45% |
+| Mid | 20-50 | 45% → 55% |
+| Late | 50-100 | 55% → 60% |
+| Final | 100-200 | 60% → **65-68%** |
+
+### If v10 < 65%: Add Weight Decay (v10b)
+
+```toml
+weight_decay = 0.0005    # L2 regularization
+```
+
+---
+
+## v9: SCAFFOLD Fixed - Result: 62.9%
+
+### Goal
+
+Fix SCAFFOLD implementation bugs that caused v7/v8 collapse. Target: Match NIID-Bench SCAFFOLD results (69.8%).
+
+### Final Result: 62.9% (Below 68% Target)
+
+| Metric | Value |
+|--------|-------|
+| Final accuracy | **62.9%** |
+| Peak accuracy | **63.0%** (round 200) |
+| Plateau start | ~round 100 |
+| Improvement over v3 | **+2.7%** |
+
+### v9 Training Progression
+
+| Round | Accuracy | Phase |
+|-------|----------|-------|
+| 1 | 24.9% | Start |
+| 20 | 48.5% | Early (on track) |
+| 50 | 55.8% | Mid (on track) |
+| 100 | 59.6% | Late (slightly behind) |
+| 150 | 62.3% | **Plateau forming** |
+| 200 | **62.9%** | **Stuck at plateau** |
+
+### Oscillation Pattern Analysis
+
+v9 showed increasing oscillation in later rounds:
+
+| Range | Pattern | Max Dip |
+|-------|---------|---------|
+| r1-50 | Steady climb | -1.1% |
+| r50-100 | Slower climb | -0.6% |
+| r100-150 | Oscillating | -0.8% |
+| r150-200 | **Stuck** (bouncing 61-63%) | -0.8% |
+
+**Key Insight:** SCAFFOLD corrections are too conservative (0.1 scaling, 0.1 clip) to push past the 62% barrier. The model needs additional regularization (data augmentation) to escape the local minimum.
+
+### Expected vs Actual: Detailed Comparison
+
+| Phase | Rounds | Expected | Actual | Gap | Status |
+|-------|--------|----------|--------|-----|--------|
+| Early | 1-20 | 25% → 45% | 24.9% → 48.5% | +3.5% | ✅ **Ahead** |
+| Mid | 20-50 | 45% → 55% | 48.5% → 55.8% | +0.8% | ✅ **On track** |
+| Late | 50-100 | 55% → 62% | 55.8% → 59.6% | **-2.4%** | ⚠️ **Behind** |
+| Final | 100-200 | 62% → 68% | 59.6% → 62.9% | **-5.1%** | ❌ **Plateaued** |
+
+**Key Observation:** v9 started strong but fell behind after round 50 and completely plateaued after round 100.
+
+### Gap Analysis: Where Did We Lose 5%?
+
+| Factor | Impact | Evidence | Fix |
+|--------|--------|----------|-----|
+| **Correction clipping too tight** | -2-3% | SCAFFOLD gains capped at ±0.1 per gradient | Try `correction_clip=0.2` |
+| **Missing data augmentation** | -3-5% | NIID-Bench likely uses augmentation | ✅ Added in v10 |
+| **Scaling factor too conservative** | -1-2% | 0.1 × model_diff may underestimate correction | Try `scaling_factor=0.2` |
+| **No weight decay** | -0.5-1% | L2 regularization helps generalization | Add `weight_decay=0.0005` |
+
+### Why v9 Underperformed
+
+1. **SCAFFOLD stability achieved** ✓ (no collapse like v7/v8)
+2. **But corrections too weak** - 0.1 scaling factor may be underdoing variance reduction
+3. **Plateau at 62%** - Model hit a local minimum that SCAFFOLD alone can't escape
+4. **Missing data augmentation** - Standard FL baseline, but augmentation adds +3-5%
+
+### Possible Implementation Issues to Investigate
+
+| Issue | Description | How to Verify |
+|-------|-------------|---------------|
+| **NIID-Bench setup mismatch** | Their SCAFFOLD config may differ | Check NIID-Bench source code |
+| **Control variate initialization** | Starting at zero may not be optimal | Try small random init |
+| **Server control update** | Are we updating c_server correctly? | Add debug logging |
+| **Gradient magnitude** | Are gradients in expected range (0.001-0.1)? | Log gradient stats |
+
+### Recommendation for v10+
+
+Based on gap analysis, priority order:
+
+1. **v10 (current):** Add data augmentation (+3-5% expected)
+2. **v10b (if needed):** Add weight_decay=0.0005 (+0.5-1% expected)
+3. **v10c (if still low):** Increase scaling_factor to 0.2 (+1-2% expected)
+4. **v10d (experimental):** Loosen correction_clip to 0.2 (risk: oscillation)
+
+### Root Cause Analysis of v7/v8 Collapse
+
+| Bug | Location | Impact |
+|-----|----------|--------|
+| **20x amplification** | `scaffold_utils.py:82` | `model_diff / (5 * 0.01) = model_diff / 0.05` |
+| **No correction clipping** | `scaffold_utils.py:127-128` | Corrections applied unbounded to gradients |
+| **Loose control variate clip** | `scaffold_utils.py:86` | clip_value=10.0 way too large |
+| **Sudden activation** | `orchestrator.py` | No gradual warmup when SCAFFOLD starts |
+
+### v9 Fixes
+
+| Fix | Old Value | New Value | Effect |
+|-----|-----------|-----------|--------|
+| **Scaling factor** | `÷ (K*lr) = ÷0.05` | `× 0.1` | Prevents 20x amplification |
+| **Correction clipping** | None | `[-0.1, 0.1]` | Bounds gradient corrections |
+| **Control variate clip** | 10.0 | **1.0** | Tighter bound on c_i |
+| **Warmup scaling** | None | Gradual over 10 rounds | `warmup_factor = round / 10` |
+
+### v9 Configuration
+
+```toml
+# pyproject.toml - v9 SCAFFOLD config
+scaffold_enabled = true
+scaffold_scaling_factor = 0.1    # Replaces 1/(K*lr) division
+scaffold_correction_clip = 0.1   # Clip corrections before applying
+scaffold_warmup_rounds = 10      # Gradual activation
+scaffold_clip_value = 1.0        # Tighter control variate bound
+```
+
+### v9 Code Changes
+
+| File | Lines | Change |
+|------|-------|--------|
+| `fedge/scaffold_utils.py` | 56-57 | Added `scaling_factor=0.1`, `clip_value=1.0` defaults |
+| `fedge/scaffold_utils.py` | 83-90 | `scaling_factor * model_diff` instead of division |
+| `fedge/scaffold_utils.py` | 117-154 | Added warmup scaling + correction clipping |
+| `fedge/task.py` | 530-531, 618-626 | Pass new SCAFFOLD params to train() |
+| `orchestrator.py` | 96-105, 248-268 | Read config + pass params |
+
+### Key Formula Changes
+
+**Control Variate Update (update_client_control):**
+```python
+# OLD (v7/v8) - caused 20x amplification:
+new_control = c_i - c_server + model_diff / (local_epochs * lr)
+
+# NEW (v9) - controlled magnitude:
+new_control = c_i - c_server + scaling_factor * model_diff  # scaling_factor=0.1
+```
+
+**Gradient Correction (apply_scaffold_correction):**
+```python
+# OLD (v7/v8) - unbounded corrections:
+correction = -c_i + c_server
+param.grad += correction
+
+# NEW (v9) - clipped + warmup scaled:
+warmup_factor = min(1.0, current_round / warmup_rounds)
+raw_correction = -c_i + c_server
+clipped = torch.clamp(raw_correction, -0.1, 0.1)
+param.grad += warmup_factor * clipped
+```
+
+### Expected Results
+
+| Phase | Rounds | Expected Accuracy |
+|-------|--------|-------------------|
+| Early | 1-20 | 25% → 45% |
+| Mid | 20-50 | 45% → 55% |
+| Late | 50-100 | 55% → 62% |
+| Final | 100-200 | 62% → **68%+** |
+
+### v9 vs Previous SCAFFOLD Attempts
+
+| Version | SCAFFOLD Config | Result |
+|---------|-----------------|--------|
+| v7 | Warmup 30 rounds, no fixes | 58.5% (collapsed at r32) |
+| v8 | From round 1, no fixes | 32.1% (collapsed at r2) |
+| **v9** | Fixed formula + clipping + warmup | **Target: 68-70%** |
+
+### Verification Plan
+
+1. **Smoke test (10 rounds):** No collapse, accuracy > 30%
+2. **Short run (50 rounds):** Monotonically increasing, > 50%
+3. **Full run (200 rounds):** Target 68%+
+
+### Fallback & Improvement Scenarios
+
+#### If v9 SCAFFOLD Still Collapses (Scenario A)
+
+| Parameter | Try Values | Expected Effect |
+|-----------|------------|-----------------|
+| `scaling_factor` | 0.05, 0.2, 0.5 | Lower = more conservative |
+| `correction_clip` | 0.05, 0.2 | Tighter = more stable |
+| `warmup_rounds` | 20, 30 | Longer = smoother activation |
+
+#### If v9 Works But Accuracy < 65% (Scenario B)
+
+**Add Data Augmentation (v10a)** - Expected: +3-5%
+
+| Technique | Expected Gain | File |
+|-----------|---------------|------|
+| AutoAugment (CIFAR-10) | +2-3% | task.py |
+| Cutout (random erasing) | +1-2% | task.py |
+| RandAugment | +2-3% | task.py |
+
+#### If v9 Works But Accuracy < 67% (Scenario C)
+
+**Add Regularization (v10b)** - Expected: +1-2%
+
+```toml
+weight_decay = 0.0005    # L2 regularization
+prox_mu = 0.01           # FedProx (may conflict with SCAFFOLD)
+```
+
+#### If SCAFFOLD Fundamentally Broken (Scenario E)
+
+**Fallback to v3 + All Enhancements (v10d)**
+
+```toml
+scaffold_enabled = false
+weight_decay = 0.0005
+prox_mu = 0.01
+lr_gamma = 0.99
+```
+
+Plus data augmentation → Expected: 64-67%
+
+### Decision Tree
+
+```
+v9 Smoke Test
+├── COLLAPSE → Tune params (A) or disable SCAFFOLD (E)
+└── NO COLLAPSE → Full run
+    ├── 68%+ → SUCCESS
+    ├── 65-68% → Add augmentation (B)
+    └── <65% → Add regularization (C) + augmentation
+```
+
+### Maximum Theoretical Accuracy
+
+| Configuration | Expected |
+|---------------|----------|
+| v3 baseline | 60.23% |
+| v9 (SCAFFOLD fixed) | 68-70% |
+| v9 + Augmentation | 70-72% |
+| v9 + Aug + Regularization | 71-73% |
+| **LeNet max** | **~75%** |
 
 ---
 
@@ -43,15 +335,16 @@ Starting SCAFFOLD from round 1 caused **immediate collapse** at round 2-3:
 2. No stable model state to build corrections from
 3. Training destabilized from the very beginning
 
-### Conclusion: SCAFFOLD Doesn't Work
+### Conclusion: SCAFFOLD Implementation Was Buggy
 
 | Version | SCAFFOLD Config | Result |
 |---------|-----------------|--------|
 | v7 | Warmup 30 rounds | 58.5% (collapsed at r32, recovered) |
 | v8 | From round 1 | 32.1% (collapsed at r2, never recovered) |
-| v3 | **Disabled** | **60.23%** (best) |
+| v3 | **Disabled** | **60.23%** (best without SCAFFOLD) |
+| **v9** | **Fixed bugs** | **Target: 68-70%** |
 
-**SCAFFOLD is fundamentally incompatible with this hierarchical FL setup.**
+**v9 Update:** SCAFFOLD collapse was due to implementation bugs (20x amplification, no correction clipping), not fundamental incompatibility. See v9 section above for fixes.
 
 ---
 
@@ -501,10 +794,21 @@ SCAFFOLD needs careful tuning:
 
 ## Git History
 
-- **v4: (current)** - Architecture fix + gradient clustering + LR decay
-  - Fix: Each server keeps own model (no global averaging before clustering)
-  - New: Gradient-based clustering (cluster by update direction)
-  - New: LR decay (lr_gamma=0.995)
+- **v10: (current)** - Data augmentation to break 62% plateau
+  - New: AutoAugment with CIFAR-10 policy
+  - New: RandomErasing (Cutout equivalent) p=0.5
+  - SCAFFOLD: Unchanged from v9 (stable, no collapse)
+  - Target: 65-68%
+  - Files: `fedge/task.py` (_train_transform)
+- v9: 62.9% - SCAFFOLD bug fixes (stable but plateaued)
+  - Fix: Replace `÷(K*lr)` with `× scaling_factor` (prevents 20x amplification)
+  - Fix: Add correction clipping `[-0.1, 0.1]` before applying to gradients
+  - Fix: Tighten control variate clip from 10.0 to 1.0
+  - New: Gradual warmup scaling over 10 rounds
+  - Result: +2.7% over v3, but below 68% target
+  - Files: `fedge/scaffold_utils.py`, `fedge/task.py`, `orchestrator.py`, `pyproject.toml`
+- v8: 32.1% - SCAFFOLD from round 1 (failed - immediate collapse)
+- v7: 58.5% - SCAFFOLD with 30-round warmup (failed - collapse at r32)
 - v3: 60.23% (100 rounds) - tau=0.4, no label smoothing, SCAFFOLD disabled
 - v2: commit `b524d42` - 59.16%
 - v1: commit `32a5d29` and earlier - 45.07%

@@ -31,7 +31,8 @@ _CIFAR10_STD = (0.2023, 0.1994, 0.2010)  # FIXED: Corrected from (0.2470, 0.2435
 
 try:
     from torchvision.transforms import (
-        Compose, Normalize, RandomCrop, RandomHorizontalFlip, ToTensor
+        Compose, Normalize, RandomCrop, RandomHorizontalFlip, ToTensor,
+        AutoAugment, AutoAugmentPolicy, RandomErasing  # v10: Data augmentation
     )
     _HAS_TV = True
 except Exception:
@@ -53,14 +54,22 @@ def _default_transform():
     ])
 
 def _train_transform():
+    """
+    Training transform with data augmentation.
+
+    v10: Added AutoAugment (CIFAR-10 policy) and RandomErasing (Cutout equivalent)
+    Expected accuracy gain: +3-5% over v9 baseline
+    """
     if not _HAS_TV:
         return _default_transform()  # fallback to basic transform
-    
+
     return Compose([
         RandomCrop(32, padding=4),
         RandomHorizontalFlip(),
+        AutoAugment(policy=AutoAugmentPolicy.CIFAR10),  # v10: CIFAR-10 learned policy
         ToTensor(),
         Normalize(_CIFAR10_MEAN, _CIFAR10_STD),
+        RandomErasing(p=0.5, scale=(0.02, 0.33), ratio=(0.3, 3.3)),  # v10: Cutout equivalent
     ])
 
 # ───────────────────────── ResNet-18 for CIFAR-10 ──────────────────────────
