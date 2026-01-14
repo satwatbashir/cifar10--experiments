@@ -527,14 +527,17 @@ def train(
     ref_weights: Optional[List[np.ndarray]] = None,
     global_round: int = 0,
     scaffold_enabled: bool = False,
+    scaffold_warmup_rounds: Optional[int] = None,     # v9: gradual SCAFFOLD activation
+    scaffold_correction_clip: Optional[float] = None, # v9: clip corrections
 ):
     net.to(device)
 
     # Read required training parameters from TOML - no fallbacks
-    if lr is None or momentum is None or weight_decay is None or clip_norm is None:
+    cfg = None
+    if lr is None or momentum is None or weight_decay is None or clip_norm is None or scaffold_warmup_rounds is None or scaffold_correction_clip is None:
         cfg = toml.load(PROJECT_ROOT / "pyproject.toml")
         hierarchy_config = cfg["tool"]["flwr"]["hierarchy"]
-        
+
         if lr is None:
             lr = hierarchy_config["lr_init"]
         if momentum is None:
@@ -543,6 +546,11 @@ def train(
             weight_decay = hierarchy_config["weight_decay"]
         if clip_norm is None:
             clip_norm = hierarchy_config["clip_norm"]
+        # v9: SCAFFOLD parameters
+        if scaffold_warmup_rounds is None:
+            scaffold_warmup_rounds = int(hierarchy_config.get("scaffold_warmup_rounds", 10))
+        if scaffold_correction_clip is None:
+            scaffold_correction_clip = float(hierarchy_config.get("scaffold_correction_clip", 0.1))
     
     wd = weight_decay
     clip_val = clip_norm
@@ -608,7 +616,14 @@ def train(
                     continue
 
             if scaffold_enabled and hasattr(net, "_scaffold_manager"):
-                net._scaffold_manager.apply_scaffold_correction(net, opt.param_groups[0]["lr"])
+                # v9: Pass warmup and correction clip parameters
+                net._scaffold_manager.apply_scaffold_correction(
+                    net,
+                    opt.param_groups[0]["lr"],
+                    current_round=global_round,
+                    warmup_rounds=scaffold_warmup_rounds,
+                    correction_clip=scaffold_correction_clip
+                )
 
             # Gradient clipping (already efficient)
             torch.nn.utils.clip_grad_norm_(net.parameters(), clip_val)

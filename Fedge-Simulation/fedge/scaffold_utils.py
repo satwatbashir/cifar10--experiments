@@ -53,19 +53,24 @@ class SCAFFOLDControlVariates:
                             global_model: nn.Module,
                             learning_rate: float,
                             local_epochs: int,
-                            clip_value: float = 10.0) -> None:
+                            clip_value: float = 1.0,
+                            scaling_factor: float = 0.1) -> None:
         """
         Update client control variate after local training.
 
-        Formula: c_i^{new} = c_i^{old} - c_server + (1/K*lr) * (global_model - local_model)
-        where K is the number of local steps.
+        v9 Fix: Use scaling factor instead of division by (K*lr) to prevent
+        amplification issues that caused collapse in v7/v8.
+
+        Original formula: c_i^{new} = c_i - c_server + (1/K*lr) * (global - local)
+        v9 formula: c_i^{new} = c_i - c_server + scaling_factor * (global - local)
 
         Args:
             local_model: Model after local training
             global_model: Global model before local training
             learning_rate: Learning rate used in training
             local_epochs: Number of local epochs
-            clip_value: Clipping bound for control variates (v6 fix)
+            clip_value: Clipping bound for control variates (v9: tightened to 1.0)
+            scaling_factor: Scaling factor for model diff (v9: replaces 1/(K*lr))
         """
         with torch.no_grad():
             for name, local_param in local_model.named_parameters():
@@ -75,14 +80,16 @@ class SCAFFOLDControlVariates:
                     # Compute model difference
                     model_diff = global_param.data - local_param.data
 
-                    # Update control variate (SCAFFOLD Option II)
+                    # v9 fix: Use scaling factor instead of division by (K*lr)
+                    # Old: model_diff / (local_epochs * learning_rate) = 20x amplification
+                    # New: scaling_factor * model_diff = controlled magnitude
                     new_control = (
                         self.client_control[name]
                         - self.server_control[name]
-                        + model_diff / (local_epochs * learning_rate)
+                        + scaling_factor * model_diff
                     )
 
-                    # v6 fix: Clip to prevent explosion
+                    # v9 fix: Tighter clipping (1.0 instead of 10.0)
                     self.client_control[name] = torch.clamp(new_control, min=-clip_value, max=clip_value)
 
         logger.debug(f"Updated client control variate for {len(self.client_control)} parameters")
@@ -113,21 +120,45 @@ class SCAFFOLDControlVariates:
         
     def apply_scaffold_correction(self,
                                 model: nn.Module,
-                                learning_rate: float) -> None:
+                                learning_rate: float,
+                                current_round: int = 0,
+                                warmup_rounds: int = 10,
+                                correction_clip: float = 0.1) -> None:
         """
         Apply SCAFFOLD correction to model gradients during training.
-        
+
+        v9 Fixes:
+        1. Clip corrections before applying (prevent gradient explosion)
+        2. Warmup scaling (gradual activation over warmup_rounds)
+
         This should be called during the training loop to correct gradients:
         corrected_grad = original_grad - c_i + c_server
+
+        Args:
+            model: The model being trained
+            learning_rate: Current learning rate
+            current_round: Current training round (for warmup)
+            warmup_rounds: Number of rounds for gradual SCAFFOLD activation
+            correction_clip: Max magnitude of corrections (v9: tight bound)
         """
+        # v9 fix: Gradual warmup to prevent sudden activation collapse
+        warmup_factor = min(1.0, current_round / max(1, warmup_rounds))
+
         with torch.no_grad():
             for name, param in model.named_parameters():
                 if param.grad is not None and name in self.client_control:
                     # Apply correction: grad = grad - c_i + c_server
-                    correction = -self.client_control[name] + self.server_control[name]
-                    param.grad.data += correction
-                    
-        logger.debug("Applied SCAFFOLD gradient correction")
+                    raw_correction = -self.client_control[name] + self.server_control[name]
+
+                    # v9 fix: Clip correction magnitude (prevents gradient explosion)
+                    clipped_correction = torch.clamp(raw_correction, min=-correction_clip, max=correction_clip)
+
+                    # v9 fix: Apply warmup scaling
+                    scaled_correction = warmup_factor * clipped_correction
+
+                    param.grad.data += scaled_correction
+
+        logger.debug(f"Applied SCAFFOLD gradient correction (warmup={warmup_factor:.2f})")
 
 
 def create_scaffold_manager(model: nn.Module) -> SCAFFOLDControlVariates:

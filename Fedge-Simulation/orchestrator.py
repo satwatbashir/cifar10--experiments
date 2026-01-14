@@ -93,14 +93,16 @@ CLUSTER_METHOD = str(CLUSTER_CFG.get("method", "weight"))  # "weight" or "gradie
 # Accuracy gate
 CLUSTER_BETTER_DELTA = float(HIER_CFG.get("cluster_better_delta", 0.0))
 
-# SCAFFOLD warmup (if SCAFFOLD is enabled)
-SCAFFOLD_WARMUP_ROUNDS = 0  # v8: Start SCAFFOLD from round 1 (no warmup)
+# SCAFFOLD config (v9: fixed amplification and clipping bugs)
+SCAFFOLD_SCALING_FACTOR = float(HIER_CFG.get("scaffold_scaling_factor", 0.1))   # v9: replaces 1/(K*lr)
+SCAFFOLD_CORRECTION_CLIP = float(HIER_CFG.get("scaffold_correction_clip", 0.1)) # v9: clip corrections
+SCAFFOLD_WARMUP_ROUNDS = int(HIER_CFG.get("scaffold_warmup_rounds", 10))        # v9: gradual activation
+SCAFFOLD_CLIP_VALUE = float(HIER_CFG.get("scaffold_clip_value", 1.0))           # v9: tightened to 1.0
 
-# Server-level SCAFFOLD config (v6)
+# Server-level SCAFFOLD config (disabled by default)
 SCAFFOLD_SERVER_ENABLED = bool(HIER_CFG.get("scaffold_server_enabled", False))
 SCAFFOLD_SERVER_LR = float(HIER_CFG.get("scaffold_server_lr", 1.0))
 SCAFFOLD_CORRECTION_LR = float(HIER_CFG.get("scaffold_correction_lr", 0.1))
-SCAFFOLD_CLIP_VALUE = float(HIER_CFG.get("scaffold_clip_value", 10.0))
 
 # Server isolation config (v6)
 SERVER_ISOLATION = bool(HIER_CFG.get("server_isolation", False))
@@ -243,8 +245,9 @@ class SimulatedClient:
         epochs = config.get("epochs", LOCAL_EPOCHS)
         global_round = config.get("global_round", 0)
 
-        # SCAFFOLD warmup
-        scaffold_active = SCAFFOLD_ENABLED and (global_round > SCAFFOLD_WARMUP_ROUNDS)
+        # v9: SCAFFOLD is always active if enabled, warmup is handled internally
+        # via warmup_factor in apply_scaffold_correction
+        scaffold_active = SCAFFOLD_ENABLED
 
         # Train
         loss = train(
@@ -259,7 +262,9 @@ class SimulatedClient:
             prox_mu=config.get("prox_mu", PROX_MU),
             ref_weights=ref_weights,
             global_round=global_round,
-            scaffold_enabled=scaffold_active
+            scaffold_enabled=scaffold_active,
+            scaffold_warmup_rounds=SCAFFOLD_WARMUP_ROUNDS,    # v9: passed to train
+            scaffold_correction_clip=SCAFFOLD_CORRECTION_CLIP # v9: passed to train
         )
 
         # Evaluate
@@ -268,7 +273,7 @@ class SimulatedClient:
         # Get updated weights
         new_weights = get_weights(net)
 
-        # SCAFFOLD: update client control variate (only after warmup)
+        # SCAFFOLD: update client control variate
         scaffold_delta = None
         if scaffold_active and self.scaffold_manager:
             from fedge.scaffold_utils import aggregate_scaffold_controls
@@ -276,7 +281,9 @@ class SimulatedClient:
                 local_model=net,
                 global_model=global_net,
                 learning_rate=lr,
-                local_epochs=epochs
+                local_epochs=epochs,
+                clip_value=SCAFFOLD_CLIP_VALUE,           # v9: tightened to 1.0
+                scaling_factor=SCAFFOLD_SCALING_FACTOR    # v9: replaces 1/(K*lr) division
             )
             scaffold_delta = self.scaffold_manager.get_client_control()
 

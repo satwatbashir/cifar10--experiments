@@ -4,7 +4,7 @@
 
 | Method | Accuracy | Rounds | Rank | Status |
 |--------|----------|--------|------|--------|
-| **Fedge v8** | **?** | 200 | **?** | 🔄 Testing |
+| Fedge v8 | 32.1% | 186 | - | ❌ Failed (immediate collapse) |
 | Fedge v3 | 60.23% | 100 | 1st | ✅ Done |
 | Fedge v7 | 58.5% | 200 | - | ❌ Failed (collapse) |
 | Fedge v2 | 59.16% | 100 | 2nd | ✅ Done |
@@ -16,37 +16,42 @@
 
 ---
 
-## v8: SCAFFOLD from Round 1 (Current)
+## v8: FAILED - SCAFFOLD from Round 1
 
 ### Approach
 
 Fix v7's collapse by starting SCAFFOLD from round 1 instead of after 30-round warmup.
 
-### Why v7 Failed
+### v8 Results (186 rounds)
 
-v7 used SCAFFOLD with 30-round warmup. Results:
-- Rounds 1-31: Good progress (25% → 52.2%)
-- Round 32: SCAFFOLD activated → **collapse to 32.7%**
-- Rounds 33-144: Recovery to 56.6%, then plateau
+| Round | Accuracy | Event |
+|-------|----------|-------|
+| 1 | 24.2% | Start |
+| 3 | **10.4%** | IMMEDIATE COLLAPSE |
+| 10 | 12.2% | Stuck |
+| 50 | 22.8% | Slow recovery |
+| 100 | 27.4% | Still recovering |
+| 150 | 30.3% | Climbing |
+| 186 | **32.1%** | Final |
 
-**Root cause:** Control variates initialized at round 31 were incompatible with the already-trained model, causing 20x gradient amplification via `model_diff / (local_epochs * lr)`.
+**Final: 32.1%** - MUCH WORSE than v7 (58.5%) and v3 (60.23%)
 
-### v8 Fix
+### Why v8 Failed
 
-Start SCAFFOLD from round 1 (no warmup). Control variates build gradually alongside model training.
+Starting SCAFFOLD from round 1 caused **immediate collapse** at round 2-3:
+1. Control variates initialized to zero made large corrections immediately
+2. No stable model state to build corrections from
+3. Training destabilized from the very beginning
 
-### v8 Configuration
+### Conclusion: SCAFFOLD Doesn't Work
 
-| Parameter | v7 | v8 |
-|-----------|-----|-----|
-| scaffold_enabled | true | **true** |
-| SCAFFOLD_WARMUP_ROUNDS | 30 | **0** |
-| server_isolation | false | false |
-| prox_mu | 0.0 | 0.0 |
+| Version | SCAFFOLD Config | Result |
+|---------|-----------------|--------|
+| v7 | Warmup 30 rounds | 58.5% (collapsed at r32, recovered) |
+| v8 | From round 1 | 32.1% (collapsed at r2, never recovered) |
+| v3 | **Disabled** | **60.23%** (best) |
 
-### Target
-
-Beat v3's 60.23% with properly initialized SCAFFOLD.
+**SCAFFOLD is fundamentally incompatible with this hierarchical FL setup.**
 
 ---
 
