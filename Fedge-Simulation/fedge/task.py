@@ -563,11 +563,10 @@ def train(
     clip_val = clip_norm
 
     opt = torch.optim.SGD(net.parameters(), lr=lr, momentum=momentum, weight_decay=wd)
-    sched = (
-        None
-        if global_round < int(os.getenv("WARMUP_ROUNDS", "5"))  # Keep warmup default for now
-        else _make_scheduler(opt, os.getenv("SCHEDULER_TYPE", "step"), lr)  # Keep scheduler default
-    )
+    # v13: REMOVED scheduler - was causing DOUBLE LR decay!
+    # LR is already decayed in orchestrator.py via: lr = LR_INIT * (LR_GAMMA ** (global_round - 1))
+    # Having StepLR here ALSO decay caused learning to stall too early
+    sched = None
 
     ce = nn.CrossEntropyLoss()  # No label smoothing (match baselines)
     
@@ -622,8 +621,12 @@ def train(
                     opt.zero_grad()
                     continue
 
+            # v13: Gradient clipping FIRST (before SCAFFOLD)
+            # Previously, clipping was AFTER SCAFFOLD, which cut off SCAFFOLD corrections!
+            torch.nn.utils.clip_grad_norm_(net.parameters(), clip_val)
+
+            # v13: SCAFFOLD correction AFTER clipping (preserves correction effect)
             if scaffold_enabled and hasattr(net, "_scaffold_manager"):
-                # v9: Pass warmup and correction clip parameters
                 net._scaffold_manager.apply_scaffold_correction(
                     net,
                     opt.param_groups[0]["lr"],
@@ -631,9 +634,6 @@ def train(
                     warmup_rounds=scaffold_warmup_rounds,
                     correction_clip=scaffold_correction_clip
                 )
-
-            # Gradient clipping (already efficient)
-            torch.nn.utils.clip_grad_norm_(net.parameters(), clip_val)
 
             opt.step()
 
@@ -708,7 +708,13 @@ def get_weights(net: nn.Module) -> List[np.ndarray]:
 
 
 def set_weights(net: nn.Module, weights: Sequence[np.ndarray]):
-    net.load_state_dict(OrderedDict({k: torch.tensor(v) for k, v in zip(net.state_dict().keys(), weights)}))
+    # v13: Preserve dtype and device from existing model state
+    # Previously, torch.tensor(v) created float32 on CPU regardless of model's actual dtype/device
+    state = net.state_dict()
+    new_state = OrderedDict()
+    for k, v in zip(state.keys(), weights):
+        new_state[k] = torch.tensor(v, dtype=state[k].dtype, device=state[k].device)
+    net.load_state_dict(new_state)
 
 
 def get_transform(train: bool = True) -> Compose:

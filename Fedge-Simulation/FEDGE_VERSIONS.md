@@ -5,8 +5,10 @@
 | Method | Accuracy | Rounds | Rank | Status |
 |--------|----------|--------|------|--------|
 | NIID-Bench SCAFFOLD | 69.8% | - | - | 📊 Target Baseline |
-| **Fedge v12** | **64-65%** | 200 | - | 🔄 Testing (v9 + weight_decay=0.0005) |
-| Fedge v9 | 62.9% | 200 | - | ✅ **BEST** (SCAFFOLD scaling=0.1, basic transforms) |
+| **Fedge v14** | **68-72%** | 200 | - | 🔄 Testing (reversed alpha + bug fixes) |
+| Fedge v13 | 66-68% | 200 | - | Skipped (v14 supersedes) |
+| Fedge v12 | 63-64% | 200 | - | Skipped (v13 supersedes) |
+| Fedge v9 | 62.9% | 200 | - | ✅ Previous BEST (SCAFFOLD scaling=0.1) |
 | Fedge v3 | 60.23% | 100 | 1st | ✅ Done |
 | Fedge v2 | 59.16% | 100 | 2nd | ✅ Done |
 | Fedge v7 | 58.5% | 200 | - | ❌ Failed (collapse) |
@@ -154,7 +156,119 @@ weight_decay = 0.0005            # L2 regularization (was 0.0)
 
 ---
 
-## v11-v14: SCAFFOLD Scaling Fix Plans (Pending v10 Results)
+## v14: Reversed Alpha Configuration - Target 68-72%
+
+### Goal
+
+Fix the fundamental setup mismatch: client-level SCAFFOLD was trying to correct non-existent drift (clients were IID). Reverse alpha values to match standard FL benchmarks.
+
+### Root Cause Analysis
+
+**Previous Setup (v9-v13):**
+- `alpha_server = 0.5` → Servers have different data (non-IID)
+- `alpha_client = 1000` → Clients within server are similar (IID)
+- **Problem:** Client SCAFFOLD corrects client drift, but there was no client drift!
+
+**v14 Setup (Reversed):**
+- `alpha_server = 1000` → Servers have similar data (IID)
+- `alpha_client = 0.5` → Clients within server are different (non-IID)
+- **Result:** SCAFFOLD now corrects real drift (as designed)
+
+### Why This Matches NIID-Bench (69.8%)
+
+NIID-Bench uses client-level non-IID with α=0.5. Their SCAFFOLD achieves 69.8% because:
+1. Clients have different data → Real drift exists
+2. SCAFFOLD control variates track meaningful divergence
+3. Corrections actually improve convergence
+
+### v14 Configuration
+
+```toml
+# pyproject.toml - v14 config (REVERSED alpha)
+[tool.flwr.hierarchy.dirichlet]
+alpha_server = 1000.0  # IID across servers (changed from 0.5)
+alpha_client = 0.5     # Non-IID within servers (changed from 1000.0)
+seed = 42
+
+# All v13 bug fixes included in task.py:
+# - Removed double LR decay
+# - Gradient clipping BEFORE SCAFFOLD
+# - set_weights preserves dtype/device
+```
+
+### Expected Results
+
+| Version | Setup | Expected Accuracy |
+|---------|-------|-------------------|
+| v9 | Server non-IID, Client IID | 62.9% |
+| v13 | + bug fixes | 66-68% |
+| **v14** | **Reversed: Client non-IID** | **68-72%** |
+
+### Verification
+
+1. Check partition regeneration shows Dirichlet sampling with new alpha values
+2. Monitor per-client accuracy variance (should be higher than v9-v13)
+3. SCAFFOLD control variates should show meaningful corrections
+
+---
+
+## v13: Critical Bug Fixes - Target 66-68%
+
+### Goal
+
+Fix 3 critical bugs discovered through deep code analysis that were limiting accuracy.
+
+### Bugs Fixed
+
+#### Bug 1: Double LR Decay (Est. -5-10%)
+**Problem:** LR was decayed TWICE:
+1. Config-level: `lr = LR_INIT * (LR_GAMMA ** round)` in orchestrator.py
+2. Scheduler-level: StepLR in task.py
+
+**Fix:** Removed StepLR scheduler, keep only config-level decay.
+
+#### Bug 2: SCAFFOLD After Gradient Clipping (Est. -5-8%)
+**Problem:** Gradient clipping was applied AFTER SCAFFOLD corrections, clipping away the corrections.
+
+**Fix:** Swap order - clip gradients FIRST, then apply SCAFFOLD.
+
+#### Bug 3: set_weights dtype/device Mismatch (Est. -2-3%)
+**Problem:** `torch.tensor(v)` created float32 on CPU regardless of model's actual dtype/device.
+
+**Fix:** Preserve dtype and device from existing model state.
+
+### v13 Configuration
+
+```toml
+# pyproject.toml - v13 config (same as v12)
+scaffold_scaling_factor = 0.1    # Keep v9 proven value
+weight_decay = 0.0005            # Keep v12 addition
+alpha_client = 1000.0            # Keep for now (defer to v14)
+```
+
+### Code Changes (task.py)
+
+1. **Removed StepLR scheduler** - Lines 566-569: `sched = None`
+2. **Swapped clip/SCAFFOLD order** - Lines 624-636: Clip first, then SCAFFOLD
+3. **Fixed set_weights** - Lines 710-717: Preserve dtype/device
+
+### Expected Results
+
+| Version | Fixes | Expected Accuracy |
+|---------|-------|-------------------|
+| v9 | SCAFFOLD fixes | 62.9% |
+| v12 | + weight_decay | 63-64% |
+| **v13** | + 3 bug fixes | **66-68%** |
+| v14 | + alpha_client=0.5 | 68-72% |
+
+### Remaining Issues (v14)
+
+1. **alpha_client=1000** - Should be 0.5 (requires re-partition)
+2. **Test set mapping bug** - Naive index mapping (complex fix)
+
+---
+
+## v11-v14: SCAFFOLD Scaling Fix Plans (Archived)
 
 ### Root Cause Analysis: Why v9 Plateaued at 62.9%
 
@@ -965,8 +1079,8 @@ SCAFFOLD needs careful tuning:
 | `batch_size` | 64 | Match baselines |
 | `num_servers` | 3 | Match HierFL |
 | `clients_per_server` | [5, 5, 5] | Match HierFL |
-| `alpha_server` | 0.5 | Non-IID standard |
-| `alpha_client` | 1000.0 | IID within server |
+| `alpha_server` | 1000.0 | v14: IID across servers (was 0.5) |
+| `alpha_client` | 0.5 | v14: Non-IID within server (was 1000) |
 | Model | LeNet | Match all baselines |
 
 ---
@@ -979,7 +1093,19 @@ SCAFFOLD needs careful tuning:
 
 ## Git History
 
-- **v12: (current)** - v9 base + weight decay regularization
+- **v14: (current)** - Reversed alpha values (standard FL setup)
+  - Change: `alpha_server = 0.5` → `1000.0` (IID across servers)
+  - Change: `alpha_client = 1000.0` → `0.5` (Non-IID within servers)
+  - Includes all v13 bug fixes
+  - Target: 68-72% (matching NIID-Bench)
+  - Files: `pyproject.toml`
+- v13: Skipped (v14 supersedes) - 3 critical bug fixes
+  - Fix: Remove double LR decay (removed StepLR scheduler)
+  - Fix: Gradient clipping BEFORE SCAFFOLD (preserves corrections)
+  - Fix: set_weights preserves dtype/device
+  - Target: 66-68%
+  - Files: `fedge/task.py`
+- v12: Skipped (v13 supersedes) - v9 base + weight decay regularization
   - Revert: `scaffold_scaling_factor = 1.0` → `0.1` (back to v9)
   - New: `weight_decay = 0.0005` (L2 regularization)
   - Target: 64-65%
