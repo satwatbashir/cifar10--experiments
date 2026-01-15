@@ -5,7 +5,8 @@
 | Method | Accuracy | Rounds | Rank | Status |
 |--------|----------|--------|------|--------|
 | NIID-Bench SCAFFOLD | 69.8% | - | - | 📊 Target Baseline |
-| **Fedge v14** | **68-72%** | 200 | - | 🔄 Testing (reversed alpha + bug fixes) |
+| **Fedge v15** | **68-72%** | 200 | - | 🔄 Testing (v14 + safety clip) |
+| Fedge v14 | ~10% | 56 | - | ❌ COLLAPSED (SCAFFOLD unclipped explosion) |
 | Fedge v13 | 66-68% | 200 | - | Skipped (v14 supersedes) |
 | Fedge v12 | 63-64% | 200 | - | Skipped (v13 supersedes) |
 | Fedge v9 | 62.9% | 200 | - | ✅ Previous BEST (SCAFFOLD scaling=0.1) |
@@ -156,11 +157,96 @@ weight_decay = 0.0005            # L2 regularization (was 0.0)
 
 ---
 
-## v14: Reversed Alpha Configuration - Target 68-72%
+## v15: Safety Clip After SCAFFOLD - Target 68-72%
+
+### Goal
+
+Fix v14's collapse by adding a safety gradient clip AFTER SCAFFOLD corrections.
+
+### Why v14 Collapsed
+
+**The v13 "fix" backfired with non-IID clients:**
+
+| Order | v9 (stable, IID clients) | v14 (collapsed, non-IID clients) |
+|-------|--------------------------|----------------------------------|
+| 1 | loss.backward() | loss.backward() |
+| 2 | SCAFFOLD correction | clip_grad_norm(1.0) |
+| 3 | clip_grad_norm(1.0) **← clipped SCAFFOLD!** | SCAFFOLD correction **← UNCLIPPED!** |
+| 4 | opt.step() | opt.step() |
+
+**In v9:** The "bug" of clipping AFTER SCAFFOLD was actually a SAFETY MECHANISM. With IID clients (alpha=1000), SCAFFOLD corrections were tiny anyway.
+
+**In v14:** We "fixed" this by clipping BEFORE SCAFFOLD. But with non-IID clients (alpha=0.5), SCAFFOLD corrections are HUGE and now unclipped → EXPLOSION at round 13.
+
+### v14 Collapse Pattern
+
+| Round | Accuracy | Loss | Event |
+|-------|----------|------|-------|
+| 1-5 | 31% → 46.7% | 1.5-2.0 | Good progress |
+| 6-12 | 45% → 23% | 2.0+ | Declining (SCAFFOLD warming up) |
+| **13-17** | **21% → 10%** | **7 → 30!** | **COLLAPSE - loss explodes** |
+| 18-56 | ~10% | ~2.4 | Stuck at random guessing |
+
+### v15 Fix: Dual Gradient Clipping
+
+```python
+# v15: Two-stage clipping for non-IID safety
+loss.backward()
+clip_grad_norm(1.0)           # Stage 1: Clip raw gradients
+SCAFFOLD correction           # Add corrections (preserved)
+clip_grad_norm(2.0)           # Stage 2: Safety clip on total (prevents explosion)
+opt.step()
+```
+
+**Why this works:**
+- Stage 1 clip (1.0): Keeps raw gradients bounded
+- SCAFFOLD correction: Applied in full (not clipped by stage 1)
+- Stage 2 clip (2.0): Allows corrections UP TO +1.0 magnitude, but prevents runaway
+
+### v15 Configuration
+
+```toml
+# pyproject.toml - v15 config (same as v14)
+alpha_server = 1000.0         # IID across servers
+alpha_client = 0.5            # Non-IID within servers
+scaffold_scaling_factor = 0.1 # Keep conservative
+scaffold_correction_clip = 0.1
+scaffold_warmup_rounds = 10
+```
+
+### Code Change (task.py)
+
+```python
+# v15: Dual clipping for non-IID stability
+torch.nn.utils.clip_grad_norm_(net.parameters(), clip_val)  # Stage 1
+
+if scaffold_enabled and hasattr(net, "_scaffold_manager"):
+    net._scaffold_manager.apply_scaffold_correction(...)
+
+# v15: Safety clip after SCAFFOLD - prevents explosion with non-IID clients
+torch.nn.utils.clip_grad_norm_(net.parameters(), clip_val * 2.0)  # Stage 2
+
+opt.step()
+```
+
+### Expected Results
+
+| Version | Issue | Expected |
+|---------|-------|----------|
+| v14 | Unclipped SCAFFOLD → collapse | ~10% (failed) |
+| **v15** | Dual clipping → stable | **68-72%** |
+
+---
+
+## v14: Reversed Alpha Configuration - FAILED (~10% collapse)
 
 ### Goal
 
 Fix the fundamental setup mismatch: client-level SCAFFOLD was trying to correct non-existent drift (clients were IID). Reverse alpha values to match standard FL benchmarks.
+
+### Result: COLLAPSED at Round 13
+
+v14 collapsed to ~10% accuracy (random guessing) due to unclipped SCAFFOLD corrections exploding with non-IID data. See v15 section above for analysis and fix.
 
 ### Root Cause Analysis
 
@@ -1093,11 +1179,16 @@ SCAFFOLD needs careful tuning:
 
 ## Git History
 
-- **v14: (current)** - Reversed alpha values (standard FL setup)
+- **v15: (current)** - Safety clip after SCAFFOLD
+  - Fix: Add second clip_grad_norm(2.0) AFTER SCAFFOLD corrections
+  - Reason: v14 collapsed because SCAFFOLD corrections were unclipped with non-IID data
+  - Target: 68-72%
+  - Files: `fedge/task.py`
+- v14: ~10% - Reversed alpha (FAILED - SCAFFOLD explosion)
   - Change: `alpha_server = 0.5` → `1000.0` (IID across servers)
   - Change: `alpha_client = 1000.0` → `0.5` (Non-IID within servers)
-  - Includes all v13 bug fixes
-  - Target: 68-72% (matching NIID-Bench)
+  - Result: Collapsed at round 13, stuck at 10% (random guessing)
+  - Lesson: v13's "clip before SCAFFOLD" fix removed safety mechanism needed for non-IID
   - Files: `pyproject.toml`
 - v13: Skipped (v14 supersedes) - 3 critical bug fixes
   - Fix: Remove double LR decay (removed StepLR scheduler)

@@ -635,6 +635,11 @@ def train(
                     correction_clip=scaffold_correction_clip
                 )
 
+            # v15: Safety clip AFTER SCAFFOLD - prevents explosion with non-IID clients
+            # v14 collapsed because SCAFFOLD corrections were unclipped with alpha_client=0.5
+            # This allows corrections up to +clip_val magnitude, but prevents runaway
+            torch.nn.utils.clip_grad_norm_(net.parameters(), clip_val * 2.0)
+
             opt.step()
 
             running_loss += loss.item()
