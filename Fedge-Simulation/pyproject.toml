@@ -46,6 +46,7 @@ dataset_flag = "cifar10"
 server_isolation = false         # All servers get same global model
 
 # Client-level SCAFFOLD (v9: fixed amplification and clipping bugs)
+# v16: Safety clip threshold 2.0 -> 3.0 (v15 achieved 66.5%, target 68-70%)
 # v15: Added safety clip AFTER SCAFFOLD (v14 collapsed due to unclipped corrections)
 # v14: REVERSED alpha values (client non-IID, server IID) - SCAFFOLD now corrects real drift
 # v13 bug fixes in task.py: removed double LR decay, clip before SCAFFOLD, dtype/device fix

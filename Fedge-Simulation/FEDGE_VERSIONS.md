@@ -5,9 +5,10 @@
 | Method | Accuracy | Rounds | Rank | Status |
 |--------|----------|--------|------|--------|
 | NIID-Bench SCAFFOLD | 69.8% | - | - | 📊 Target Baseline |
-| **Fedge v15** | **68-72%** | 200 | - | 🔄 Testing (v14 + safety clip) |
+| **Fedge v16** | **68-70%** | 200 | - | 🔄 Testing (safety clip 3.0) |
+| Fedge v15 | 66.5% | 200 | - | ✅ NEW BEST (dual clipping) |
 | Fedge v14 | ~10% | 56 | - | ❌ COLLAPSED (SCAFFOLD unclipped explosion) |
-| Fedge v13 | 66-68% | 200 | - | Skipped (v14 supersedes) |
+| Fedge v13 | 62.2% | 200 | - | ✅ Done (bug fixes, IID clients) |
 | Fedge v12 | 63-64% | 200 | - | Skipped (v13 supersedes) |
 | Fedge v9 | 62.9% | 200 | - | ✅ Previous BEST (SCAFFOLD scaling=0.1) |
 | Fedge v3 | 60.23% | 100 | 1st | ✅ Done |
@@ -157,11 +158,68 @@ weight_decay = 0.0005            # L2 regularization (was 0.0)
 
 ---
 
-## v15: Safety Clip After SCAFFOLD - Target 68-72%
+## v16: Safety Clip Tuning - Target 68-70%
+
+### Goal
+
+Close the remaining 3.3% gap to NIID-Bench (69.8%) by loosening the safety clip threshold.
+
+### Analysis
+
+v15 achieved 66.5% with dual clipping (safety clip = 2.0). The safety clip may be too tight, limiting beneficial SCAFFOLD corrections. With the non-IID setup working correctly, we can afford to loosen the safety net.
+
+### Change
+
+```python
+# v15 (current):
+torch.nn.utils.clip_grad_norm_(net.parameters(), clip_val * 2.0)
+
+# v16 (change to):
+torch.nn.utils.clip_grad_norm_(net.parameters(), clip_val * 3.0)
+```
+
+### Expected Results
+
+| Version | Safety Clip | Accuracy |
+|---------|-------------|----------|
+| v15 | 2.0 | 66.5% |
+| **v16** | **3.0** | **68-70%** |
+
+---
+
+## v15: Dual Gradient Clipping - SUCCESS (66.5%)
 
 ### Goal
 
 Fix v14's collapse by adding a safety gradient clip AFTER SCAFFOLD corrections.
+
+### Result: SUCCESS - 66.5%
+
+| Round | Accuracy | Loss |
+|-------|----------|------|
+| 1 | 31.1% | 2.03 |
+| 50 | 48.5% | 1.42 |
+| 100 | 57.3% | 1.21 |
+| 150 | 64.0% | 1.01 |
+| **200** | **66.5%** | **0.95** |
+
+**Run path:** `seed42_20260115_132006`
+
+### Key Achievement
+
+| Metric | Value |
+|--------|-------|
+| Final Accuracy | **66.5%** |
+| Improvement over v9 | **+3.6%** |
+| Gap to NIID-Bench | 3.3% |
+| Stability | Stable (no collapse) |
+
+### Why v15 Worked
+
+1. **Reversed alpha** - SCAFFOLD corrects REAL client drift (α=0.5)
+2. **Dual gradient clipping** - Prevents explosion from large corrections
+3. **Stage 1 clip (1.0)** - Bounds raw gradients
+4. **Stage 2 clip (2.0)** - Safety net after SCAFFOLD
 
 ### Why v14 Collapsed
 
@@ -1179,10 +1237,15 @@ SCAFFOLD needs careful tuning:
 
 ## Git History
 
-- **v15: (current)** - Safety clip after SCAFFOLD
+- **v16: (current)** - Safety clip threshold tuning
+  - Change: clip_val * 2.0 → clip_val * 3.0 (loosen safety net)
+  - Reason: v15's safety clip may limit beneficial SCAFFOLD corrections
+  - Target: 68-70%
+  - Files: `fedge/task.py`
+- v15: 66.5% - Dual gradient clipping (SUCCESS - NEW BEST)
   - Fix: Add second clip_grad_norm(2.0) AFTER SCAFFOLD corrections
-  - Reason: v14 collapsed because SCAFFOLD corrections were unclipped with non-IID data
-  - Target: 68-72%
+  - Result: 66.5% - +3.6% over v9, stable training
+  - Key: Reversed alpha + dual clipping works!
   - Files: `fedge/task.py`
 - v14: ~10% - Reversed alpha (FAILED - SCAFFOLD explosion)
   - Change: `alpha_server = 0.5` → `1000.0` (IID across servers)
