@@ -635,10 +635,10 @@ def train(
                     correction_clip=scaffold_correction_clip
                 )
 
-            # v16: Safety clip AFTER SCAFFOLD - allows larger SCAFFOLD corrections
-            # v15 used 2.0 (66.5%), v16 uses 3.0 to allow more benefit from SCAFFOLD
-            # Still prevents explosion while giving SCAFFOLD more freedom
-            torch.nn.utils.clip_grad_norm_(net.parameters(), clip_val * 3.0)
+            # v16c: Safety clip AFTER SCAFFOLD - keeps v15's stable threshold
+            # v16a's 3.0 FAILED (warmup instability), v15's 2.0 is optimal
+            # Safety clip prevents explosion while preserving SCAFFOLD corrections
+            torch.nn.utils.clip_grad_norm_(net.parameters(), clip_val * 2.0)
 
             opt.step()
 

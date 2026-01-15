@@ -5,7 +5,8 @@
 | Method | Accuracy | Rounds | Rank | Status |
 |--------|----------|--------|------|--------|
 | NIID-Bench SCAFFOLD | 69.8% | - | - | 📊 Target Baseline |
-| **Fedge v16** | **68-70%** | 200 | - | 🔄 Testing (safety clip 3.0) |
+| **Fedge v16c** | **68-70%** | 200 | - | 🔄 Testing (scaling 0.2) |
+| Fedge v16a | ~62% | 200 | - | ❌ FAILED (clip 3.0 too loose) |
 | Fedge v15 | 66.5% | 200 | - | ✅ NEW BEST (dual clipping) |
 | Fedge v14 | ~10% | 56 | - | ❌ COLLAPSED (SCAFFOLD unclipped explosion) |
 | Fedge v13 | 62.2% | 200 | - | ✅ Done (bug fixes, IID clients) |
@@ -158,32 +159,78 @@ weight_decay = 0.0005            # L2 regularization (was 0.0)
 
 ---
 
-## v16: Safety Clip Tuning - Target 68-70%
+## v16a: Safety Clip 3.0 - FAILED (~62%)
 
 ### Goal
 
 Close the remaining 3.3% gap to NIID-Bench (69.8%) by loosening the safety clip threshold.
 
-### Analysis
-
-v15 achieved 66.5% with dual clipping (safety clip = 2.0). The safety clip may be too tight, limiting beneficial SCAFFOLD corrections. With the non-IID setup working correctly, we can afford to loosen the safety net.
-
 ### Change
 
 ```python
-# v15 (current):
+# v15 (baseline):
 torch.nn.utils.clip_grad_norm_(net.parameters(), clip_val * 2.0)
 
-# v16 (change to):
+# v16a (change to):
 torch.nn.utils.clip_grad_norm_(net.parameters(), clip_val * 3.0)
+```
+
+### Result: FAILED - Worse Than v15
+
+| Round | v16a | v15 | Gap |
+|-------|------|-----|-----|
+| 50 | 46.2% | 48.5% | **-2.3%** |
+| 80 | 50.6% | ~54% | **~-3.4%** |
+| 200 (proj) | ~62% | 66.5% | **~-4.5%** |
+
+### Why v16a Failed
+
+The 3.0 clip threshold is **TOO LOOSE**:
+1. SCAFFOLD warmup period (rounds 7-15) showed severe instability
+2. Accuracy dropped to 23% at round 12 (vs v15's smoother warmup)
+3. Larger corrections during warmup destabilized training
+4. The system never fully recovered from early instability
+
+### Key Insight
+
+v15's 2.0 safety clip was NOT too tight - it was providing crucial stability during SCAFFOLD warmup. Loosening it allowed overcorrection during the sensitive warmup phase.
+
+---
+
+## v16c: SCAFFOLD Scaling 0.2 - Target 68-70%
+
+### Goal
+
+Close the remaining 3.3% gap using a different approach: keep v15's stable clip (2.0) but increase SCAFFOLD scaling factor.
+
+### Strategy
+
+**Keep v15's stable clip (2.0) + increase SCAFFOLD scaling (0.1 → 0.2)**
+
+Rationale:
+- v15's clip (2.0) provides stability during warmup (proven)
+- Scaling factor increase affects steady-state phase (rounds 20+)
+- Stronger corrections after warmup completes
+
+### Changes
+
+```toml
+# pyproject.toml - v16c
+scaffold_scaling_factor = 0.2    # was 0.1 in v15
+```
+
+```python
+# task.py - KEEP v15's stable clip (revert v16a)
+torch.nn.utils.clip_grad_norm_(net.parameters(), clip_val * 2.0)
 ```
 
 ### Expected Results
 
-| Version | Safety Clip | Accuracy |
-|---------|-------------|----------|
-| v15 | 2.0 | 66.5% |
-| **v16** | **3.0** | **68-70%** |
+| Version | Safety Clip | Scaling | Expected |
+|---------|-------------|---------|----------|
+| v15 | 2.0 | 0.1 | 66.5% |
+| v16a | 3.0 | 0.1 | ~62% FAILED |
+| **v16c** | **2.0** | **0.2** | **68-70%** |
 
 ---
 
@@ -1237,10 +1284,15 @@ SCAFFOLD needs careful tuning:
 
 ## Git History
 
-- **v16: (current)** - Safety clip threshold tuning
-  - Change: clip_val * 2.0 → clip_val * 3.0 (loosen safety net)
-  - Reason: v15's safety clip may limit beneficial SCAFFOLD corrections
+- **v16c: (current)** - SCAFFOLD scaling increase
+  - Change: `scaffold_scaling_factor = 0.1` → `0.2`
+  - Change: Revert safety clip to v15's stable 2.0
   - Target: 68-70%
+  - Files: `pyproject.toml`, `fedge/task.py`
+- v16a: ~62% - Safety clip 3.0 (FAILED - warmup instability)
+  - Change: clip_val * 2.0 → clip_val * 3.0
+  - Result: Worse than v15 due to warmup instability
+  - Lesson: Safety clip 2.0 is optimal for SCAFFOLD warmup
   - Files: `fedge/task.py`
 - v15: 66.5% - Dual gradient clipping (SUCCESS - NEW BEST)
   - Fix: Add second clip_grad_norm(2.0) AFTER SCAFFOLD corrections
