@@ -33,7 +33,7 @@ clients_per_server = [5, 5, 5]
 global_rounds = 200
 server_rounds_per_global = 1
 # Note: cloud_port and server_base_port removed (not needed for in-memory simulation)
-weight_decay = 0.0
+weight_decay = 0.0005            # v12: L2 regularization (was 0.0 in v9)
 clip_norm = 1.0
 momentum = 0.9
 lr_gamma = 0.995                 # LR decay: ~0.37 of initial LR by round 200
@@ -46,10 +46,10 @@ dataset_flag = "cifar10"
 server_isolation = false         # All servers get same global model
 
 # Client-level SCAFFOLD (v9: fixed amplification and clipping bugs)
-# v11: Increase scaling_factor 10x (0.1 → 1.0) to address 200x undercorrection
-# v11: Data augmentation REMOVED (revert to basic transforms to isolate scaling effect)
+# v12: Revert scaling to v9's proven 0.1 (v11's 1.0 was too aggressive, caused -6% drop)
+# v12: Add weight_decay=0.0005 regularization to improve generalization
 scaffold_enabled = true          # Enable SCAFFOLD from round 1
-scaffold_scaling_factor = 1.0    # v11: 10x increase from v9's 0.1 (addresses 200x undercorrection)
+scaffold_scaling_factor = 0.1    # v12: Reverted to v9's proven value (v11's 1.0 failed)
 scaffold_correction_clip = 0.1   # v9: tight bound on corrections applied to gradients
 scaffold_warmup_rounds = 10      # v9: gradual activation to prevent sudden collapse
 scaffold_clip_value = 1.0        # v9: tightened from 10.0 to prevent control variate explosion

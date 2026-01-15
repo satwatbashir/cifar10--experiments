@@ -5,15 +5,13 @@
 | Method | Accuracy | Rounds | Rank | Status |
 |--------|----------|--------|------|--------|
 | NIID-Bench SCAFFOLD | 69.8% | - | - | 📊 Target Baseline |
-| Fedge v14 | 68-70% | 200 | - | 📋 Planned (scaling=20.0, paper formula) |
-| Fedge v13 | 67-70% | 200 | - | 📋 Planned (scaling=5.0, aggressive) |
-| Fedge v12 | 66-68% | 200 | - | 📋 Planned (scaling=2.0, moderate) |
-| **Fedge v11** | **64-67%** | 200 | - | 🔄 Testing (scaling=1.0, 10x increase) |
-| Fedge v10 | ~57-59% | 200 | - | ❌ Failed (augmentation + weak SCAFFOLD) |
-| Fedge v9 | 62.9% | 200 | - | ✅ Done (SCAFFOLD fixed, but 200x undercorrection) |
+| **Fedge v12** | **64-65%** | 200 | - | 🔄 Testing (v9 + weight_decay=0.0005) |
+| Fedge v9 | 62.9% | 200 | - | ✅ **BEST** (SCAFFOLD scaling=0.1, basic transforms) |
 | Fedge v3 | 60.23% | 100 | 1st | ✅ Done |
 | Fedge v2 | 59.16% | 100 | 2nd | ✅ Done |
 | Fedge v7 | 58.5% | 200 | - | ❌ Failed (collapse) |
+| Fedge v10 | ~57-59% | 200 | - | ❌ Failed (augmentation + weak SCAFFOLD) |
+| Fedge v11 | 56.8% | 200 | - | ❌ Failed (scaling=1.0, overcorrection) |
 | FedProx | 56.29% | 200 | 3rd | ✅ Baseline |
 | Fedge v6 | ~56.5% | 200 | 4th | ❌ Failed |
 | Fedge v4 | ~56% | 200 | 5th | ❌ Failed |
@@ -67,67 +65,92 @@ Data augmentation requires stronger SCAFFOLD to compensate for harder training. 
 
 ---
 
-## v11: SCAFFOLD Scaling Fix - Target 64-67%
+## v11: SCAFFOLD Scaling Fix - FAILED (56.8%)
 
 ### Goal
 
 Fix the root cause of v9/v10 underperformance: SCAFFOLD is ~200x undercorrected.
 
-### Why v11 (Not v10b)?
+### Hypothesis (WRONG)
 
 | Option | Change | Expected Effect |
 |--------|--------|-----------------|
-| v10b (weight_decay) | Add L2 regularization | Won't fix core problem - SCAFFOLD still ~200x undercorrection |
-| **v11 (scaling=1.0)** | **10x SCAFFOLD increase** | **Addresses root cause - control variates actually work** |
+| v10b (weight_decay) | Add L2 regularization | Won't fix core problem |
+| **v11 (scaling=1.0)** | **10x SCAFFOLD increase** | Should address root cause |
 
-**v11 targets the fundamental issue: SCAFFOLD is essentially disabled.**
+### v11 Results: FAILED - Worse Than v9
 
-### v11 Configuration
+| Round | v11 Actual | v9 Actual | Gap |
+|-------|-----------|-----------|-----|
+| 20 | 36.3% | 48.5% | **-12.2%** |
+| 50 | 41.7% | 55.8% | **-14.1%** |
+| 100 | 47.4% | 59.6% | **-12.2%** |
+| 150 | 53.4% | ~61.5% | **-8.1%** |
+| **200** | **56.8%** | **62.9%** | **-6.1%** |
+
+**v11 finished at 56.8% - significantly WORSE than v9's 62.9%**
+
+### What Went Wrong
+
+1. **Early instability (rounds 4-5)**: Accuracy dropped from 32.8% to 26.0% before recovering
+2. **Very slow progression**: Linear growth instead of v9's exponential curve in rounds 20-100
+3. **10x scaling was TOO AGGRESSIVE**: Overcorrection hurt rather than helped
+
+### Key Insight: Original Hypothesis Was Wrong
+
+The conservative scaling=0.1 was NOT "200x undercorrection" - it was actually appropriate for this hierarchical FL setup. The SCAFFOLD paper formula assumes standard FL, not hierarchical aggregation. Increasing scaling made things worse.
+
+### Lesson Learned
+
+In hierarchical FL, control variate corrections need to be more conservative because:
+1. Server-level aggregation already reduces client drift
+2. Large corrections interfere with hierarchical aggregation benefits
+3. The "undercorrection" was actually stabilizing the system
+
+---
+
+## v12: v9 Base + Weight Decay - Target 64-65%
+
+### Goal
+
+Build on v9 (our best result at 62.9%) with regularization instead of changing SCAFFOLD.
+
+### Why v12 (Not More Scaling Experiments)?
+
+| Option | Risk | Rationale |
+|--------|------|-----------|
+| v11a (scaling=0.3) | Medium | More scaling experiments may all fail |
+| **v12 (weight_decay)** | **Low** | **v9 is proven, add regularization** |
+
+### v12 Configuration
 
 ```toml
-# pyproject.toml - v11 SCAFFOLD config
+# pyproject.toml - v12 config (v9 base + weight_decay)
 scaffold_enabled = true
-scaffold_scaling_factor = 1.0    # v11: 10x increase from v9's 0.1
-scaffold_correction_clip = 0.1   # Keep same (prevents gradient explosion)
-scaffold_warmup_rounds = 10      # Keep same (gradual activation)
-scaffold_clip_value = 1.0        # Keep same (bounds control variates)
+scaffold_scaling_factor = 0.1    # REVERT: Back to v9's proven value
+scaffold_correction_clip = 0.1   # Keep same
+scaffold_warmup_rounds = 10      # Keep same
+scaffold_clip_value = 1.0        # Keep same
+
+# NEW: Add regularization
+weight_decay = 0.0005            # L2 regularization (was 0.0)
 ```
 
-### v11 Code Changes
+### Expected Effect
 
-**File:** `fedge/task.py` - Remove v10 augmentation, revert to v9 basic transforms
+| Component | v9 | v12 | Expected Gain |
+|-----------|-----|-----|---------------|
+| SCAFFOLD scaling | 0.1 | 0.1 | (same) |
+| Weight decay | 0.0 | 0.0005 | +1-2% |
+| Target accuracy | 62.9% | **64-65%** | +1-2% |
 
-```python
-# v11: Revert to basic transforms (isolate scaling fix effect)
-def _train_transform():
-    return Compose([
-        RandomCrop(32, padding=4),
-        RandomHorizontalFlip(),
-        ToTensor(),
-        Normalize(_CIFAR10_MEAN, _CIFAR10_STD),
-    ])
-```
+### If v12 Succeeds (64%+): Next Steps
 
-### Expected Results
-
-| Phase | Rounds | v9 Actual | v11 Expected |
-|-------|--------|-----------|--------------|
-| Early | 1-20 | 24.9% → 48.5% | 25% → 50% |
-| Mid | 20-50 | 48.5% → 55.8% | 50% → 58% |
-| Late | 50-100 | 55.8% → 59.6% | 58% → 63% |
-| Final | 100-200 | 59.6% → 62.9% | 63% → **65-67%** |
-
-### Why This Should Work
-
-v9's safeguards (correction_clip, warmup, clip_value) prevent v7/v8-style collapse. Increasing scaling_factor with these safeguards should be safe AND effective.
-
-### If v11 Fails: Next Steps
-
-| Result | Next Version | Change |
-|--------|--------------|--------|
-| Collapses | v11a | Reduce to scaling=0.5, increase warmup to 20 |
-| Works but < 65% | v12 | Increase to scaling=2.0 |
-| Works at 65%+ | v11+aug | Add augmentation back (now SCAFFOLD can handle it) |
+| Option | Change | Expected |
+|--------|--------|----------|
+| v12a | Add cosine LR scheduler | +0.5-1% |
+| v12b | Increase weight_decay to 0.001 | Test stronger regularization |
+| v12+aug | Re-add data augmentation | v12 base handles harder training better |
 
 ---
 
@@ -956,16 +979,20 @@ SCAFFOLD needs careful tuning:
 
 ## Git History
 
-- **v11: (current)** - SCAFFOLD scaling fix (10x increase)
+- **v12: (current)** - v9 base + weight decay regularization
+  - Revert: `scaffold_scaling_factor = 1.0` → `0.1` (back to v9)
+  - New: `weight_decay = 0.0005` (L2 regularization)
+  - Target: 64-65%
+  - Files: `pyproject.toml`
+- v11: 56.8% - SCAFFOLD scaling fix (FAILED - overcorrection)
   - Change: `scaffold_scaling_factor = 0.1` → `1.0` (10x increase)
-  - Revert: Remove v10 data augmentation (isolate scaling effect)
-  - Target: 64-67%
-  - Files: `pyproject.toml`, `fedge/task.py` (_train_transform)
+  - Result: Worse than v9 (-6.1%), hypothesis was wrong
+  - Lesson: Hierarchical FL needs conservative SCAFFOLD corrections
 - v10: ~57-59% - Data augmentation (FAILED - worse than v9)
   - Added: AutoAugment + RandomErasing
   - Problem: Weak SCAFFOLD + harder training = double penalty
   - Files: `fedge/task.py` (_train_transform)
-- v9: 62.9% - SCAFFOLD bug fixes (stable but plateaued)
+- v9: 62.9% - SCAFFOLD bug fixes (BEST RESULT - stable)
   - Fix: Replace `÷(K*lr)` with `× scaling_factor` (prevents 20x amplification)
   - Fix: Add correction clipping `[-0.1, 0.1]` before applying to gradients
   - Fix: Tighten control variate clip from 10.0 to 1.0
